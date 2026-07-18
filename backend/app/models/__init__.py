@@ -26,7 +26,12 @@ from backend.app.models.printer import Printer
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.printer_sensor_history import PrinterSensorHistory
 from backend.app.models.product import Product
-from backend.app.models.product_master import MaterialTypeSpoolMapping, ProductComponent, ProductImage, ProductionBOMItem
+from backend.app.models.product_master import (
+    MaterialTypeSpoolMapping,
+    ProductComponent,
+    ProductImage,
+    ProductionBOMItem,
+)
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.models.project import Project
