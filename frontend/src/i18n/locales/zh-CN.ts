@@ -9,6 +9,7 @@ export default {
     maintenance: '维护',
     projects: '项目',
     products: '产品',
+    productionOrders: '生产订单',
     materialTypes: '材料类型',
     printerProfiles: '打印配置组',
     inventory: '耗材',

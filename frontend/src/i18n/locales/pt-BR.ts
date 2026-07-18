@@ -9,6 +9,7 @@ export default {
     maintenance: 'Manutenção',
     projects: 'Projetos',
     products: 'Produtos',
+    productionOrders: 'Ordens de produção',
     materialTypes: 'Tipos de material',
     printerProfiles: 'Perfis de impressora',
     inventory: 'Inventário',

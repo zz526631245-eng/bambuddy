@@ -9,6 +9,7 @@ export default {
     maintenance: 'Wartung',
     projects: 'Projekte',
     products: 'Produkte',
+    productionOrders: 'Produktionsaufträge',
     materialTypes: 'Materialtypen',
     printerProfiles: 'Druckerprofile',
     inventory: 'Filament',

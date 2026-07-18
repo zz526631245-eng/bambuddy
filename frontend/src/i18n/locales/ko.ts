@@ -8,6 +8,7 @@ export default {
     maintenance: '유지보수',
     projects: '프로젝트',
     products: '제품',
+    productionOrders: '생산 주문',
     materialTypes: '재료 유형',
     printerProfiles: '프린터 프로필',
     inventory: '필라멘트',

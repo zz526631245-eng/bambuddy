@@ -9,6 +9,7 @@ export default {
     maintenance: '維護',
     projects: '專案',
     products: '產品',
+    productionOrders: '生產訂單',
     materialTypes: '材料類型',
     printerProfiles: '印表機設定檔',
     inventory: '耗材',

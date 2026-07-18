@@ -9,6 +9,7 @@ export default {
     maintenance: 'Bakım',
     projects: 'Projeler',
     products: 'Ürünler',
+    productionOrders: 'Üretim Siparişleri',
     materialTypes: 'Malzeme türleri',
     printerProfiles: 'Yazıcı profilleri',
     inventory: 'Filament',
