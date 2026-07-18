@@ -24,11 +24,17 @@ class PrinterProfile(Base):
     printer_model: Mapped[str] = mapped_column(String(50), index=True)
     nozzle_diameter: Mapped[float] = mapped_column(Float)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    location: Mapped[str | None] = mapped_column(String(255))
+    profile_group: Mapped[str | None] = mapped_column(String(100))
+    auto_production_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     recipes: Mapped[list[ProductionRecipe]] = relationship(back_populates="printer_profile")
+    compatible_recipes = relationship(
+        "ProductionRecipe", secondary="production_recipe_profiles", back_populates="compatible_profiles"
+    )
     plate_jobs: Mapped[list[PlateJob]] = relationship(back_populates="printer_profile")
 
 

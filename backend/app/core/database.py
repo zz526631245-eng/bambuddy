@@ -5,6 +5,7 @@ from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from backend.app.core.config import settings
 from backend.app.core.db_dialect import is_sqlite
@@ -26,7 +27,10 @@ def _set_sqlite_pragmas(dbapi_conn, connection_record):
 def _create_engine():
     """Create the async engine with dialect-appropriate settings."""
     if is_sqlite():
-        kwargs = {"pool_size": 20, "max_overflow": 200}
+        # SQLAlchemy 2.0.43+ defaults aiosqlite file databases to NullPool,
+        # which rejects pool_size/max_overflow. Keep Bambuddy's intended
+        # bounded pool explicitly on every supported SQLAlchemy version.
+        kwargs = {"poolclass": AsyncAdaptedQueuePool, "pool_size": 20, "max_overflow": 200}
     else:
         kwargs = {"pool_size": 10, "max_overflow": 20}
     eng = create_async_engine(
@@ -176,11 +180,24 @@ async def ensure_production_schema(conn):
         operation_log,
         printer_profile,
         product,
+        product_master,
         production,
         production_recipe,
     )
 
     await conn.run_sync(Base.metadata.create_all)
+
+
+async def ensure_stage7_columns(conn):
+    """Idempotently upgrade existing Stage 6 rows with Stage 7 columns."""
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN location VARCHAR(255)")
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN profile_group VARCHAR(100)")
+    stage7_false = "FALSE" if conn.dialect.name == "postgresql" else "0"
+    await _safe_execute(
+        conn,
+        f"ALTER TABLE printer_profiles ADD COLUMN auto_production_enabled BOOLEAN DEFAULT {stage7_false} NOT NULL",
+    )
+    await _safe_execute(conn, "ALTER TABLE production_recipes ADD COLUMN slicer_preset VARCHAR(255)")
 
 
 async def init_db():
@@ -220,6 +237,7 @@ async def init_db():
         printer_profile,
         printer_sensor_history,
         product,
+        product_master,
         production,
         production_recipe,
         project,
@@ -696,6 +714,10 @@ async def run_migrations(conn):
     swallowed.
     """
     from sqlalchemy import text
+
+    # Stage 7: optional links and production master-data fields. New tables are
+    # created by ensure_production_schema; these ALTERs upgrade Stage 6 databases.
+    await ensure_stage7_columns(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

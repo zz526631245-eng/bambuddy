@@ -11,6 +11,10 @@ import { ProfilesPage } from './pages/ProfilesPage';
 import { MaintenancePage } from './pages/MaintenancePage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
+import { ProductsPage } from './pages/ProductsPage';
+import { ProductDetailPage as ProductionProductDetailPage } from './pages/ProductDetailPage';
+import { MaterialTypesPage } from './pages/MaterialTypesPage';
+import { PrinterProfilesPage } from './pages/PrinterProfilesPage';
 import { FileManagerPage } from './pages/FileManagerPage';
 import { LibraryTrashPage } from './pages/LibraryTrashPage';
 import { CameraPage } from './pages/CameraPage';
@@ -206,6 +210,10 @@ function App() {
                   <Route path="maintenance" element={<MaintenancePage />} />
                   <Route path="projects" element={<ProjectsPage />} />
                   <Route path="projects/:id" element={<ProjectDetailPage />} />
+                  <Route path="products" element={<PermissionRoute permission="products:read"><ProductsPage /></PermissionRoute>} />
+                  <Route path="products/:id" element={<PermissionRoute permission="products:read"><ProductionProductDetailPage /></PermissionRoute>} />
+                  <Route path="material-types" element={<PermissionRoute permission="material_types:read"><MaterialTypesPage /></PermissionRoute>} />
+                  <Route path="printer-profiles" element={<PermissionRoute permission="printer_profiles:read"><PrinterProfilesPage /></PermissionRoute>} />
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="files" element={<FileManagerPage />} />
                   <Route path="files/trash" element={<LibraryTrashPage />} />

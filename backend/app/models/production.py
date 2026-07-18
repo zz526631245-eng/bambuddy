@@ -47,6 +47,11 @@ PRODUCTION_TABLE_NAMES = {
     "production_requirements",
     "plate_jobs",
     "operation_logs",
+    "product_images",
+    "product_components",
+    "production_bom_items",
+    "production_recipe_profiles",
+    "material_type_spool_mappings",
 }
 
 

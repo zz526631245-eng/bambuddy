@@ -28,6 +28,8 @@ class Product(Base):
 
     recipes: Mapped[list[ProductionRecipe]] = relationship(back_populates="product")
     orders: Mapped[list[ProductionOrder]] = relationship(back_populates="product")
+    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
+    bom_items = relationship("ProductionBOMItem", back_populates="product", cascade="all, delete-orphan")
 
 
 if TYPE_CHECKING:

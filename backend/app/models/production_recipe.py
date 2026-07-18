@@ -5,10 +5,28 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.database import Base
+
+production_recipe_profiles = Table(
+    "production_recipe_profiles",
+    Base.metadata,
+    Column("recipe_id", ForeignKey("production_recipes.id", ondelete="CASCADE"), primary_key=True),
+    Column("printer_profile_id", ForeignKey("printer_profiles.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class ProductionRecipe(Base):
@@ -34,6 +52,7 @@ class ProductionRecipe(Base):
     slicer_pipeline_id: Mapped[int | None] = mapped_column(
         ForeignKey("slicer_pipelines.id", ondelete="SET NULL"), nullable=True
     )
+    slicer_preset: Mapped[str | None] = mapped_column(String(255))
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -43,6 +62,13 @@ class ProductionRecipe(Base):
     material_type: Mapped[MaterialType | None] = relationship(back_populates="recipes")
     printer_profile: Mapped[PrinterProfile | None] = relationship(back_populates="recipes")
     requirements: Mapped[list[ProductionRequirement]] = relationship(back_populates="recipe")
+    compatible_profiles = relationship(
+        "PrinterProfile", secondary=production_recipe_profiles, back_populates="compatible_recipes"
+    )
+
+    @property
+    def compatible_profile_ids(self) -> list[int]:
+        return [profile.id for profile in self.compatible_profiles]
 
 
 if TYPE_CHECKING:

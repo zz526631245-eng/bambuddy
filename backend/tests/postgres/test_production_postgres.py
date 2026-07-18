@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import backend.app.models  # noqa: F401
-from backend.app.core.database import Base, ensure_production_schema
+from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.product import Product
 from backend.app.models.production import PRODUCTION_TABLE_NAMES, ProductionOrder
@@ -141,3 +141,31 @@ async def test_postgres_operation_id_is_safe_under_concurrent_inserts(postgres_e
 
     results = await asyncio.gather(insert_once("worker-a"), insert_once("worker-b"))
     assert sorted(results) == ["created", "duplicate"]
+
+
+async def test_postgres_stage6_to_stage7_columns_preserve_rows(postgres_engine):
+    async with postgres_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE printer_profiles (id SERIAL PRIMARY KEY, code VARCHAR(100), name VARCHAR(255), printer_model VARCHAR(50), nozzle_diameter DOUBLE PRECISION, version INTEGER, is_active BOOLEAN)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_recipes (id SERIAL PRIMARY KEY, code VARCHAR(100), name VARCHAR(255), version INTEGER, is_active BOOLEAN)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO printer_profiles (code, name, printer_model, nozzle_diameter, version, is_active) VALUES ('X1', 'X1', 'X1C', 0.4, 1, TRUE)"
+            )
+        )
+        await conn.execute(
+            text("INSERT INTO production_recipes (code, name, version, is_active) VALUES ('R1', 'Recipe', 1, TRUE)")
+        )
+        await ensure_stage7_columns(conn)
+        await ensure_stage7_columns(conn)
+        profile = (await conn.execute(text("SELECT code, auto_production_enabled FROM printer_profiles"))).one()
+        recipe = (await conn.execute(text("SELECT code, slicer_preset FROM production_recipes"))).one()
+    assert profile == ("X1", False)
+    assert recipe == ("R1", None)

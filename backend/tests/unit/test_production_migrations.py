@@ -9,7 +9,7 @@ from sqlalchemy import MetaData, event, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import backend.app.models  # noqa: F401
-from backend.app.core.database import Base, ensure_production_schema
+from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns
 from backend.app.models.production import PRODUCTION_TABLE_NAMES
 
 
@@ -82,4 +82,28 @@ async def test_sqlite_schema_failure_does_not_damage_legacy_tables(tmp_path: Pat
 
     assert sentinel == "still-here"
     assert integrity == "ok"
+    await engine.dispose()
+
+
+async def test_sqlite_stage6_to_stage7_columns_preserve_rows_and_repeat(tmp_path: Path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stage6-to-7.db'}")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE printer_profiles (id INTEGER PRIMARY KEY, code VARCHAR(100), name VARCHAR(255), printer_model VARCHAR(50), nozzle_diameter REAL, version INTEGER, is_active BOOLEAN)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_recipes (id INTEGER PRIMARY KEY, code VARCHAR(100), name VARCHAR(255), version INTEGER, is_active BOOLEAN)"
+            )
+        )
+        await conn.execute(text("INSERT INTO printer_profiles VALUES (1, 'X1', 'X1', 'X1C', 0.4, 1, 1)"))
+        await conn.execute(text("INSERT INTO production_recipes VALUES (1, 'R1', 'Recipe', 1, 1)"))
+        await ensure_stage7_columns(conn)
+        await ensure_stage7_columns(conn)
+        profile = (await conn.execute(text("SELECT code, auto_production_enabled FROM printer_profiles"))).one()
+        recipe = (await conn.execute(text("SELECT code, slicer_preset FROM production_recipes"))).one()
+    assert profile == ("X1", 0)
+    assert recipe == ("R1", None)
     await engine.dispose()

@@ -100,7 +100,7 @@ function buildSlicerUrlFilename(filename: string): string {
   return safe.toLowerCase().endsWith('.3mf') ? safe : `${safe}.3mf`;
 }
 
-async function request<T>(
+export async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
@@ -3140,6 +3140,12 @@ export type Permission =
   | 'library:update_own' | 'library:update_all' | 'library:delete_own' | 'library:delete_all'
   | 'library:purge'
   | 'projects:read' | 'projects:create' | 'projects:update' | 'projects:delete'
+  | 'products:read' | 'products:write'
+  | 'material_types:read' | 'material_types:write'
+  | 'printer_profiles:read' | 'printer_profiles:write'
+  | 'recipes:read' | 'recipes:write'
+  | 'production_orders:read' | 'production_orders:create' | 'production_orders:update'
+  | 'plate_jobs:read' | 'plate_jobs:update' | 'quality:confirm'
   | 'filaments:read' | 'filaments:create' | 'filaments:update' | 'filaments:delete'
   | 'inventory:read' | 'inventory:create' | 'inventory:update' | 'inventory:delete' | 'inventory:view_assignments'
   | 'inventory:forecast_read' | 'inventory:forecast_write'

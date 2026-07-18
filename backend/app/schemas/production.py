@@ -27,6 +27,23 @@ class MaterialTypeCreate(BaseModel):
 
     _strip_code = field_validator("code", "material")(_strip_required)
 
+    @field_validator("code", "material")
+    @classmethod
+    def normalize_upper(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("subtype", "brand", "color_name")
+    @classmethod
+    def normalize_optional(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+    @field_validator("color_hex")
+    @classmethod
+    def normalize_hex(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return "#" + value.lstrip("#").upper()
+
 
 class MaterialTypeResponse(_FromAttributes):
     id: int
@@ -47,6 +64,9 @@ class PrinterProfileCreate(BaseModel):
     printer_model: str = Field(min_length=1, max_length=50)
     nozzle_diameter: float = Field(gt=0)
     version: int = Field(default=1, ge=1)
+    location: str | None = Field(default=None, max_length=255)
+    profile_group: str | None = Field(default=None, max_length=100)
+    auto_production_enabled: bool = False
     is_active: bool = True
 
     _strip_fields = field_validator("code", "name", "printer_model")(_strip_required)
@@ -59,6 +79,9 @@ class PrinterProfileResponse(_FromAttributes):
     printer_model: str
     nozzle_diameter: float
     version: int
+    location: str | None
+    profile_group: str | None
+    auto_production_enabled: bool
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -72,6 +95,8 @@ class ProductionRecipeCreate(BaseModel):
     printer_profile_id: int | None = None
     library_file_id: int | None = None
     slicer_pipeline_id: int | None = None
+    slicer_preset: str | None = Field(default=None, max_length=255)
+    compatible_profile_ids: list[int] = []
     version: int = Field(default=1, ge=1)
     is_active: bool = True
 
@@ -87,6 +112,8 @@ class ProductionRecipeResponse(_FromAttributes):
     printer_profile_id: int | None
     library_file_id: int | None
     slicer_pipeline_id: int | None
+    slicer_preset: str | None
+    compatible_profile_ids: list[int] = []
     version: int
     is_active: bool
     created_at: datetime

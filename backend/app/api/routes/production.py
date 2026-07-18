@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
@@ -17,9 +18,11 @@ from backend.app.models.material_type import MaterialType
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product import Product
+from backend.app.models.product_master import MaterialTypeSpoolMapping
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
-from backend.app.models.production_recipe import ProductionRecipe
+from backend.app.models.production_recipe import ProductionRecipe, production_recipe_profiles
 from backend.app.models.slicer_pipeline import SlicerPipeline
+from backend.app.models.spool import Spool
 from backend.app.models.user import User
 from backend.app.schemas.production import (
     MaterialTypeCreate,
@@ -75,6 +78,77 @@ async def create_material_type(
     return await _commit_unique(db, MaterialType(**payload.model_dump()), "Material type code already exists")
 
 
+@router.put("/material-types/{item_id}", response_model=MaterialTypeResponse)
+async def update_material_type(
+    item_id: int,
+    payload: MaterialTypeCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.MATERIAL_TYPES_WRITE),
+):
+    item = await _require_row(db, MaterialType, item_id, "Material type not found")
+    for key, value in payload.model_dump().items():
+        setattr(item, key, value)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Material type code already exists")
+    await db.refresh(item)
+    return item
+
+
+@router.delete("/material-types/{item_id}", status_code=204)
+async def delete_material_type(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.MATERIAL_TYPES_WRITE),
+):
+    item = await _require_row(db, MaterialType, item_id, "Material type not found")
+    recipe_ref = (
+        await db.execute(select(ProductionRecipe.id).where(ProductionRecipe.material_type_id == item_id).limit(1))
+    ).scalar_one_or_none()
+    spool_ref = (
+        await db.execute(
+            select(MaterialTypeSpoolMapping.spool_id)
+            .where(MaterialTypeSpoolMapping.material_type_id == item_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if recipe_ref or spool_ref:
+        raise HTTPException(409, "Material type is referenced by a recipe or spool")
+    await db.delete(item)
+    await db.commit()
+
+
+@router.put("/material-types/{item_id}/spools/{spool_id}", status_code=204)
+async def map_spool(
+    item_id: int,
+    spool_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.MATERIAL_TYPES_WRITE),
+):
+    await _require_row(db, MaterialType, item_id, "Material type not found")
+    await _require_row(db, Spool, spool_id, "Spool not found")
+    existing = await db.get(MaterialTypeSpoolMapping, (item_id, spool_id))
+    if not existing:
+        db.add(MaterialTypeSpoolMapping(material_type_id=item_id, spool_id=spool_id))
+        await db.commit()
+
+
+@router.delete("/material-types/{item_id}/spools/{spool_id}", status_code=204)
+async def unmap_spool(
+    item_id: int,
+    spool_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.MATERIAL_TYPES_WRITE),
+):
+    await _require_row(db, Spool, spool_id, "Spool not found")
+    mapping = await db.get(MaterialTypeSpoolMapping, (item_id, spool_id))
+    if mapping:
+        await db.delete(mapping)
+        await db.commit()
+
+
 @router.get("/printer-profiles", response_model=list[PrinterProfileResponse])
 async def list_printer_profiles(
     db: AsyncSession = Depends(get_db),
@@ -92,12 +166,67 @@ async def create_printer_profile(
     return await _commit_unique(db, PrinterProfile(**payload.model_dump()), "Printer profile code already exists")
 
 
+@router.put("/printer-profiles/{item_id}", response_model=PrinterProfileResponse)
+async def update_printer_profile(
+    item_id: int,
+    payload: PrinterProfileCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTER_PROFILES_WRITE),
+):
+    item = await _require_row(db, PrinterProfile, item_id, "Printer profile not found")
+    for key, value in payload.model_dump().items():
+        setattr(item, key, value)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Printer profile code already exists")
+    await db.refresh(item)
+    return item
+
+
+@router.delete("/printer-profiles/{item_id}", status_code=204)
+async def delete_printer_profile(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTER_PROFILES_WRITE),
+):
+    item = await _require_row(db, PrinterProfile, item_id, "Printer profile not found")
+    recipe_ref = (
+        await db.execute(select(ProductionRecipe.id).where(ProductionRecipe.printer_profile_id == item_id).limit(1))
+    ).scalar_one_or_none()
+    job_ref = (
+        await db.execute(select(PlateJob.id).where(PlateJob.printer_profile_id == item_id).limit(1))
+    ).scalar_one_or_none()
+    compatible_ref = (
+        await db.execute(
+            select(production_recipe_profiles.c.recipe_id)
+            .where(production_recipe_profiles.c.printer_profile_id == item_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if recipe_ref or job_ref or compatible_ref:
+        raise HTTPException(409, "Printer profile is referenced by a recipe or plate job")
+    await db.delete(item)
+    await db.commit()
+
+
 @router.get("/recipes", response_model=list[ProductionRecipeResponse])
 async def list_recipes(
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.RECIPES_READ),
 ):
-    return list((await db.execute(select(ProductionRecipe).order_by(ProductionRecipe.id))).scalars().all())
+    return list(
+        (
+            await db.execute(
+                select(ProductionRecipe)
+                .options(selectinload(ProductionRecipe.compatible_profiles))
+                .order_by(ProductionRecipe.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 @router.post("/recipes", response_model=ProductionRecipeResponse, status_code=status.HTTP_201_CREATED)
@@ -111,11 +240,77 @@ async def create_recipe(
     await _require_row(db, PrinterProfile, payload.printer_profile_id, "Printer profile not found")
     await _require_row(db, LibraryFile, payload.library_file_id, "Library file not found")
     await _require_row(db, SlicerPipeline, payload.slicer_pipeline_id, "Slicer pipeline not found")
-    return await _commit_unique(
-        db,
-        ProductionRecipe(**payload.model_dump()),
-        "Recipe code and version already exist",
-    )
+    values = payload.model_dump(exclude={"compatible_profile_ids"})
+    recipe = ProductionRecipe(**values)
+    for profile_id in payload.compatible_profile_ids:
+        recipe.compatible_profiles.append(
+            await _require_row(db, PrinterProfile, profile_id, "Compatible printer profile not found")
+        )
+    recipe = await _commit_unique(db, recipe, "Recipe code and version already exist")
+    return (
+        await db.execute(
+            select(ProductionRecipe)
+            .where(ProductionRecipe.id == recipe.id)
+            .options(selectinload(ProductionRecipe.compatible_profiles))
+        )
+    ).scalar_one()
+
+
+@router.put("/recipes/{item_id}", response_model=ProductionRecipeResponse)
+async def update_recipe(
+    item_id: int,
+    payload: ProductionRecipeCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.RECIPES_WRITE),
+):
+    recipe = (
+        await db.execute(
+            select(ProductionRecipe)
+            .where(ProductionRecipe.id == item_id)
+            .options(selectinload(ProductionRecipe.compatible_profiles))
+        )
+    ).scalar_one_or_none()
+    if not recipe:
+        raise HTTPException(404, "Recipe not found")
+    await _require_row(db, Product, payload.product_id, "Product not found")
+    await _require_row(db, MaterialType, payload.material_type_id, "Material type not found")
+    await _require_row(db, PrinterProfile, payload.printer_profile_id, "Printer profile not found")
+    await _require_row(db, LibraryFile, payload.library_file_id, "Library file not found")
+    await _require_row(db, SlicerPipeline, payload.slicer_pipeline_id, "Slicer pipeline not found")
+    for key, value in payload.model_dump(exclude={"compatible_profile_ids"}).items():
+        setattr(recipe, key, value)
+    recipe.compatible_profiles = [
+        await _require_row(db, PrinterProfile, pid, "Compatible printer profile not found")
+        for pid in payload.compatible_profile_ids
+    ]
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "Recipe code and version already exists")
+    return (
+        await db.execute(
+            select(ProductionRecipe)
+            .where(ProductionRecipe.id == recipe.id)
+            .options(selectinload(ProductionRecipe.compatible_profiles))
+        )
+    ).scalar_one()
+
+
+@router.delete("/recipes/{item_id}", status_code=204)
+async def delete_recipe(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.RECIPES_WRITE),
+):
+    item = await _require_row(db, ProductionRecipe, item_id, "Recipe not found")
+    ref = (
+        await db.execute(select(ProductionRequirement.id).where(ProductionRequirement.recipe_id == item_id).limit(1))
+    ).scalar_one_or_none()
+    if ref:
+        raise HTTPException(409, "Recipe is referenced by a production requirement")
+    await db.delete(item)
+    await db.commit()
 
 
 @router.get("/orders", response_model=list[ProductionOrderResponse])
