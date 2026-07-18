@@ -4,7 +4,7 @@ No endpoint in this module imports the scheduler, creates queue items, or
 communicates with a printer.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from backend.app.models.material_type import MaterialType
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product import Product
-from backend.app.models.product_master import MaterialTypeSpoolMapping
+from backend.app.models.product_master import MaterialTypeSpoolMapping, ProductComponent, ProductionBOMItem
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.production_recipe import ProductionRecipe, production_recipe_profiles
 from backend.app.models.slicer_pipeline import SlicerPipeline
@@ -28,14 +28,29 @@ from backend.app.schemas.production import (
     MaterialTypeCreate,
     MaterialTypeResponse,
     OperationLogResponse,
+    PlateJobConfirmRequest,
+    PlateJobConfirmResponse,
+    PlateJobPreviewResponse,
     PlateJobResponse,
     PrinterProfileCreate,
     PrinterProfileResponse,
     ProductionOrderCreate,
+    ProductionOrderDetail,
     ProductionOrderResponse,
+    ProductionOrderStatusAction,
+    ProductionOrderUpdate,
     ProductionRecipeCreate,
     ProductionRecipeResponse,
     ProductionRequirementResponse,
+)
+from backend.app.services.production_order_service import (
+    ProductionOrderError,
+    change_order_status,
+    confirm_plate_jobs,
+    create_order as create_production_order,
+    order_detail,
+    preview_plate_jobs,
+    update_order as update_production_order,
 )
 
 router = APIRouter(prefix="/production", tags=["production"])
@@ -236,6 +251,15 @@ async def create_recipe(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.RECIPES_WRITE),
 ):
     await _require_row(db, Product, payload.product_id, "Product not found")
+    component = await _require_row(db, ProductComponent, payload.component_id, "Product component not found")
+    if component and not (
+        await db.execute(
+            select(ProductComponent.id)
+            .join(ProductionBOMItem, ProductionBOMItem.component_id == ProductComponent.id)
+            .where(ProductComponent.id == component.id, ProductionBOMItem.product_id == payload.product_id)
+        )
+    ).scalar_one_or_none():
+        raise HTTPException(422, "该零件不在这个产品的零件清单中")
     await _require_row(db, MaterialType, payload.material_type_id, "Material type not found")
     await _require_row(db, PrinterProfile, payload.printer_profile_id, "Printer profile not found")
     await _require_row(db, LibraryFile, payload.library_file_id, "Library file not found")
@@ -273,6 +297,15 @@ async def update_recipe(
     if not recipe:
         raise HTTPException(404, "Recipe not found")
     await _require_row(db, Product, payload.product_id, "Product not found")
+    component = await _require_row(db, ProductComponent, payload.component_id, "Product component not found")
+    if component and not (
+        await db.execute(
+            select(ProductComponent.id)
+            .join(ProductionBOMItem, ProductionBOMItem.component_id == ProductComponent.id)
+            .where(ProductComponent.id == component.id, ProductionBOMItem.product_id == payload.product_id)
+        )
+    ).scalar_one_or_none():
+        raise HTTPException(422, "该零件不在这个产品的零件清单中")
     await _require_row(db, MaterialType, payload.material_type_id, "Material type not found")
     await _require_row(db, PrinterProfile, payload.printer_profile_id, "Printer profile not found")
     await _require_row(db, LibraryFile, payload.library_file_id, "Library file not found")
@@ -324,13 +357,118 @@ async def list_orders(
 @router.post("/orders", response_model=ProductionOrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     payload: ProductionOrderCreate,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_CREATE),
 ):
-    await _require_row(db, Product, payload.product_id, "Product not found")
-    values = payload.model_dump()
-    values["created_by_id"] = current_user.id if current_user else None
-    return await _commit_unique(db, ProductionOrder(**values), "Production order number already exists")
+    try:
+        order, replayed = await create_production_order(
+            db,
+            **payload.model_dump(),
+            actor_user_id=current_user.id if current_user else None,
+        )
+    except ProductionOrderError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(409, "生产订单编号已经存在") from exc
+    if replayed:
+        response.status_code = status.HTTP_200_OK
+    return order
+
+
+@router.get("/orders/{order_id}", response_model=ProductionOrderDetail)
+async def get_order_detail(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_READ),
+):
+    try:
+        return await order_detail(db, order_id)
+    except ProductionOrderError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.patch("/orders/{order_id}", response_model=ProductionOrderResponse)
+async def update_order(
+    order_id: int,
+    payload: ProductionOrderUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_UPDATE),
+):
+    try:
+        return await update_production_order(
+            db,
+            order_id,
+            **payload.model_dump(),
+            provided_fields=payload.model_fields_set,
+        )
+    except ProductionOrderError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/orders/{order_id}/status", response_model=ProductionOrderResponse)
+async def update_order_status(
+    order_id: int,
+    payload: ProductionOrderStatusAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_UPDATE),
+):
+    if payload.action == "cancel":
+        # Authentication-disabled development instances return ``None`` and are
+        # already trusted by the dependency.  Permission enforcement remains in
+        # the dependency layer for authenticated deployments.
+        pass
+    try:
+        order, _ = await change_order_status(
+            db,
+            order_id=order_id,
+            operation_id=payload.operation_id,
+            action=payload.action,
+            actor_user_id=current_user.id if current_user else None,
+        )
+        return order
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/orders/{order_id}/plate-jobs/preview", response_model=PlateJobPreviewResponse)
+async def preview_order_plate_jobs(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    try:
+        order, items = await preview_plate_jobs(db, order_id)
+        return {"order_id": order.id, "items": items}
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post(
+    "/orders/{order_id}/plate-jobs/confirm",
+    response_model=PlateJobConfirmResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def confirm_order_plate_jobs(
+    order_id: int,
+    payload: PlateJobConfirmRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+):
+    try:
+        jobs, replayed = await confirm_plate_jobs(
+            db,
+            order_id=order_id,
+            operation_id=payload.operation_id,
+            items=payload.items,
+            actor_user_id=current_user.id if current_user else None,
+        )
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if replayed:
+        response.status_code = status.HTTP_200_OK
+    return {"order_id": order_id, "items": jobs}
 
 
 @router.get("/requirements", response_model=list[ProductionRequirementResponse])

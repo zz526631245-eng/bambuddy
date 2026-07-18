@@ -71,6 +71,7 @@ def test_production_permissions_are_classified_and_added_to_default_roles():
         (ProductionOrder, "ck_production_orders_quantity_non_negative"),
         (ProductionOrder, "ck_production_orders_priority_non_negative"),
         (ProductionRequirement, "ck_production_requirements_required_quantity_non_negative"),
+        (ProductionRequirement, "ck_production_requirements_unit_quantity_positive"),
         (ProductionRequirement, "ck_production_requirements_reserved_quantity_non_negative"),
         (ProductionRequirement, "ck_production_requirements_good_quantity_non_negative"),
         (ProductionRequirement, "ck_production_requirements_scrap_quantity_non_negative"),

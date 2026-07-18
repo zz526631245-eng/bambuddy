@@ -91,6 +91,7 @@ class ProductionRecipeCreate(BaseModel):
     code: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=255)
     product_id: int
+    component_id: int | None = None
     material_type_id: int | None = None
     printer_profile_id: int | None = None
     library_file_id: int | None = None
@@ -108,6 +109,7 @@ class ProductionRecipeResponse(_FromAttributes):
     code: str
     name: str
     product_id: int
+    component_id: int | None
     material_type_id: int | None
     printer_profile_id: int | None
     library_file_id: int | None
@@ -121,6 +123,7 @@ class ProductionRecipeResponse(_FromAttributes):
 
 
 class ProductionOrderCreate(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
     order_number: str = Field(min_length=1, max_length=100)
     product_id: int
     quantity: int = Field(ge=0)
@@ -128,7 +131,7 @@ class ProductionOrderCreate(BaseModel):
     due_at: datetime | None = None
     notes: str | None = None
 
-    _strip_order_number = field_validator("order_number")(_strip_required)
+    _strip_order_fields = field_validator("operation_id", "order_number")(_strip_required)
 
 
 class ProductionOrderResponse(_FromAttributes):
@@ -140,6 +143,9 @@ class ProductionOrderResponse(_FromAttributes):
     status: str
     due_at: datetime | None
     notes: str | None
+    product_snapshot: dict | None
+    bom_snapshot: list | None
+    recipe_snapshot: list | None
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
@@ -149,10 +155,14 @@ class ProductionRequirementResponse(_FromAttributes):
     id: int
     order_id: int
     recipe_id: int
+    component_id: int | None
+    unit_quantity: float
     required_quantity: int
     reserved_quantity: int
     good_quantity: int
     scrap_quantity: int
+    component_snapshot: dict | None
+    recipe_snapshot: dict | None
     status: str
     created_at: datetime
     updated_at: datetime
@@ -178,3 +188,59 @@ class OperationLogResponse(_FromAttributes):
     actor_user_id: int | None
     payload: dict | None
     created_at: datetime
+
+
+class QuantityLedgerResponse(BaseModel):
+    planned: int
+    reserved: int
+    good: int
+    scrap: int
+    remaining: int
+
+
+class ProductionOrderUpdate(BaseModel):
+    priority: int | None = Field(default=None, ge=0)
+    due_at: datetime | None = None
+    notes: str | None = None
+
+
+class ProductionOrderStatusAction(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
+    action: str
+
+    _strip_operation = field_validator("operation_id", "action")(_strip_required)
+
+
+class PlateJobPreviewItem(BaseModel):
+    requirement_id: int
+    printer_profile_id: int | None
+    planned_quantity: int = Field(gt=0)
+    component_name: str
+    print_plan_name: str
+
+
+class PlateJobPreviewResponse(BaseModel):
+    order_id: int
+    items: list[PlateJobPreviewItem]
+
+
+class PlateJobConfirmRequest(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
+    items: list[PlateJobPreviewItem] = Field(min_length=1)
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
+
+
+class PlateJobConfirmResponse(BaseModel):
+    order_id: int
+    items: list[PlateJobResponse]
+
+
+class ProductionRequirementDetail(ProductionRequirementResponse):
+    ledger: QuantityLedgerResponse
+    plate_jobs: list[PlateJobResponse]
+
+
+class ProductionOrderDetail(ProductionOrderResponse):
+    requirements: list[ProductionRequirementDetail]
+    operations: list[OperationLogResponse]

@@ -58,17 +58,28 @@ async def test_create_minimal_master_data_and_recipe(async_client: AsyncClient):
     assert recipe_response.json()["product_id"] == product["id"]
 
 
-async def test_create_order_does_not_create_requirements_jobs_or_queue_items(
+async def test_create_order_requires_stage8_operation_id_and_complete_master_data(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ):
     product = (await async_client.post("/api/v1/products", json={"sku": "SKU-O", "name": "Order Product"})).json()
-    response = await async_client.post(
+    missing_operation = await async_client.post(
         "/api/v1/production/orders",
         json={"order_number": "ORDER-001", "product_id": product["id"], "quantity": 25},
     )
-    assert response.status_code == 201
-    assert response.json()["status"] == "draft"
+    assert missing_operation.status_code == 422
+
+    response = await async_client.post(
+        "/api/v1/production/orders",
+        json={
+            "operation_id": "stage6-incomplete-master",
+            "order_number": "ORDER-001",
+            "product_id": product["id"],
+            "quantity": 25,
+        },
+    )
+    assert response.status_code == 422
+    assert "零件清单" in response.json()["detail"]
 
     requirements = await async_client.get("/api/v1/production/requirements")
     plate_jobs = await async_client.get("/api/v1/production/plate-jobs")
@@ -93,9 +104,14 @@ async def test_negative_quantities_are_rejected_before_database(async_client: As
 async def test_missing_foreign_keys_return_404(async_client: AsyncClient):
     response = await async_client.post(
         "/api/v1/production/orders",
-        json={"order_number": "ORDER-MISSING", "product_id": 999999, "quantity": 1},
+        json={
+            "operation_id": "missing-product",
+            "order_number": "ORDER-MISSING",
+            "product_id": 999999,
+            "quantity": 1,
+        },
     )
-    assert response.status_code == 404
+    assert response.status_code == 422
 
 
 async def test_operation_logs_are_read_only_in_stage_6(async_client: AsyncClient):

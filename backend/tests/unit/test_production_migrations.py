@@ -9,7 +9,7 @@ from sqlalchemy import MetaData, event, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import backend.app.models  # noqa: F401
-from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns
+from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns, ensure_stage8_columns
 from backend.app.models.production import PRODUCTION_TABLE_NAMES
 
 
@@ -106,4 +106,35 @@ async def test_sqlite_stage6_to_stage7_columns_preserve_rows_and_repeat(tmp_path
         recipe = (await conn.execute(text("SELECT code, slicer_preset FROM production_recipes"))).one()
     assert profile == ("X1", 0)
     assert recipe == ("R1", None)
+    await engine.dispose()
+
+
+async def test_sqlite_stage7_to_stage8_columns_preserve_rows_and_repeat(tmp_path: Path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stage7-to-8.db'}")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE production_recipes (id INTEGER PRIMARY KEY, code VARCHAR(100), name VARCHAR(255))"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_orders (id INTEGER PRIMARY KEY, order_number VARCHAR(100), product_id INTEGER, quantity INTEGER, priority INTEGER, status VARCHAR(30))"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_requirements (id INTEGER PRIMARY KEY, order_id INTEGER, recipe_id INTEGER, required_quantity INTEGER, reserved_quantity INTEGER, good_quantity INTEGER, scrap_quantity INTEGER, status VARCHAR(30))"
+            )
+        )
+        await conn.execute(text("INSERT INTO production_orders VALUES (1, 'KEEP-8', 1, 2, 0, 'planned')"))
+        await ensure_stage8_columns(conn)
+        await ensure_stage8_columns(conn)
+        order = (await conn.execute(text("SELECT order_number, product_snapshot FROM production_orders"))).one()
+        requirement_columns = {
+            column[1] for column in (await conn.execute(text("PRAGMA table_info(production_requirements)"))).all()
+        }
+
+    assert order == ("KEEP-8", None)
+    assert {"component_id", "unit_quantity", "component_snapshot", "recipe_snapshot"} <= requirement_columns
     await engine.dispose()

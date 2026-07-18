@@ -108,7 +108,34 @@ async def test_material_normalization_profile_fields_recipe_compatibility_and_no
 
 async def test_product_delete_reference_protection(async_client: AsyncClient):
     product = (await async_client.post("/api/v1/products", json={"sku": "REF-7", "name": "Referenced"})).json()
+    component = (
+        await async_client.post(
+            "/api/v1/products/components",
+            json={"code": "REF-PART-7", "name": "Referenced part", "unit": "个"},
+        )
+    ).json()
     await async_client.post(
-        "/api/v1/production/orders", json={"order_number": "REF-ORDER", "product_id": product["id"], "quantity": 1}
+        f"/api/v1/products/{product['id']}/bom",
+        json={"component_id": component["id"], "quantity": 1},
+    )
+    recipe = await async_client.post(
+        "/api/v1/production/recipes",
+        json={
+            "code": "REF-PLAN-7",
+            "name": "Referenced plan",
+            "product_id": product["id"],
+            "component_id": component["id"],
+            "version": 1,
+        },
+    )
+    assert recipe.status_code == 201
+    await async_client.post(
+        "/api/v1/production/orders",
+        json={
+            "operation_id": "ref-order-7",
+            "order_number": "REF-ORDER",
+            "product_id": product["id"],
+            "quantity": 1,
+        },
     )
     assert (await async_client.delete(f"/api/v1/products/{product['id']}")).status_code == 409

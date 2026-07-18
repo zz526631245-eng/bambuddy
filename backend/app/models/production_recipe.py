@@ -40,6 +40,9 @@ class ProductionRecipe(Base):
     code: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(255))
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    component_id: Mapped[int | None] = mapped_column(
+        ForeignKey("product_components.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     material_type_id: Mapped[int | None] = mapped_column(
         ForeignKey("material_types.id", ondelete="SET NULL"), nullable=True
     )
@@ -59,6 +62,7 @@ class ProductionRecipe(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     product: Mapped[Product] = relationship(back_populates="recipes")
+    component = relationship("ProductComponent")
     material_type: Mapped[MaterialType | None] = relationship(back_populates="recipes")
     printer_profile: Mapped[PrinterProfile | None] = relationship(back_populates="recipes")
     requirements: Mapped[list[ProductionRequirement]] = relationship(back_populates="recipe")

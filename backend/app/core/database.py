@@ -200,6 +200,29 @@ async def ensure_stage7_columns(conn):
     await _safe_execute(conn, "ALTER TABLE production_recipes ADD COLUMN slicer_preset VARCHAR(255)")
 
 
+async def ensure_stage8_columns(conn):
+    """Idempotently add Stage 8 order snapshots and component links."""
+    await _safe_execute(
+        conn,
+        "ALTER TABLE production_recipes ADD COLUMN component_id INTEGER "
+        "REFERENCES product_components(id) ON DELETE RESTRICT",
+    )
+    await _safe_execute(conn, "ALTER TABLE production_orders ADD COLUMN product_snapshot JSON")
+    await _safe_execute(conn, "ALTER TABLE production_orders ADD COLUMN bom_snapshot JSON")
+    await _safe_execute(conn, "ALTER TABLE production_orders ADD COLUMN recipe_snapshot JSON")
+    await _safe_execute(
+        conn,
+        "ALTER TABLE production_requirements ADD COLUMN component_id INTEGER "
+        "REFERENCES product_components(id) ON DELETE RESTRICT",
+    )
+    await _safe_execute(
+        conn,
+        "ALTER TABLE production_requirements ADD COLUMN unit_quantity FLOAT DEFAULT 1 NOT NULL",
+    )
+    await _safe_execute(conn, "ALTER TABLE production_requirements ADD COLUMN component_snapshot JSON")
+    await _safe_execute(conn, "ALTER TABLE production_requirements ADD COLUMN recipe_snapshot JSON")
+
+
 async def init_db():
     # Import models to register them with SQLAlchemy
     from backend.app.models import (  # noqa: F401
@@ -718,6 +741,7 @@ async def run_migrations(conn):
     # Stage 7: optional links and production master-data fields. New tables are
     # created by ensure_production_schema; these ALTERs upgrade Stage 6 databases.
     await ensure_stage7_columns(conn)
+    await ensure_stage8_columns(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

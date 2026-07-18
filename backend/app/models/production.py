@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.compat import StrEnum
@@ -74,6 +74,9 @@ class ProductionOrder(Base):
     status: Mapped[str] = mapped_column(String(30), default=OrderStatus.DRAFT.value, nullable=False)
     due_at: Mapped[datetime | None] = mapped_column(DateTime)
     notes: Mapped[str | None] = mapped_column(Text)
+    product_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    bom_snapshot: Mapped[list | None] = mapped_column(JSON)
+    recipe_snapshot: Mapped[list | None] = mapped_column(JSON)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -92,6 +95,7 @@ class ProductionRequirement(Base):
             "required_quantity >= 0",
             name="ck_production_requirements_required_quantity_non_negative",
         ),
+        CheckConstraint("unit_quantity > 0", name="ck_production_requirements_unit_quantity_positive"),
         CheckConstraint(
             "reserved_quantity >= 0",
             name="ck_production_requirements_reserved_quantity_non_negative",
@@ -107,16 +111,23 @@ class ProductionRequirement(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("production_orders.id", ondelete="CASCADE"), index=True)
     recipe_id: Mapped[int] = mapped_column(ForeignKey("production_recipes.id", ondelete="RESTRICT"), index=True)
+    component_id: Mapped[int | None] = mapped_column(
+        ForeignKey("product_components.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    unit_quantity: Mapped[float] = mapped_column(Float, default=1, nullable=False)
     required_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reserved_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     good_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     scrap_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    component_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    recipe_snapshot: Mapped[dict | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(30), default=RequirementStatus.PENDING.value, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     order: Mapped[ProductionOrder] = relationship(back_populates="requirements")
     recipe: Mapped[ProductionRecipe] = relationship(back_populates="requirements")
+    component = relationship("ProductComponent")
     plate_jobs: Mapped[list[PlateJob]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
 
 

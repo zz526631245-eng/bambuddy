@@ -15,10 +15,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import backend.app.models  # noqa: F401
-from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns
+from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns, ensure_stage8_columns
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.product import Product
+from backend.app.models.product_master import ProductComponent, ProductionBOMItem
 from backend.app.models.production import PRODUCTION_TABLE_NAMES, ProductionOrder
+from backend.app.models.production_recipe import ProductionRecipe
+from backend.app.services.production_order_service import create_order
 
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
 pytestmark = [
@@ -169,3 +172,71 @@ async def test_postgres_stage6_to_stage7_columns_preserve_rows(postgres_engine):
         recipe = (await conn.execute(text("SELECT code, slicer_preset FROM production_recipes"))).one()
     assert profile == ("X1", False)
     assert recipe == ("R1", None)
+
+
+async def test_postgres_stage7_to_stage8_columns_preserve_rows(postgres_engine):
+    async with postgres_engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE product_components (id SERIAL PRIMARY KEY)"))
+        await conn.execute(
+            text("CREATE TABLE production_recipes (id SERIAL PRIMARY KEY, code VARCHAR(100), name VARCHAR(255))")
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_orders (id SERIAL PRIMARY KEY, order_number VARCHAR(100), product_id INTEGER, quantity INTEGER, priority INTEGER, status VARCHAR(30))"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_requirements (id SERIAL PRIMARY KEY, order_id INTEGER, recipe_id INTEGER, required_quantity INTEGER, reserved_quantity INTEGER, good_quantity INTEGER, scrap_quantity INTEGER, status VARCHAR(30))"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO production_orders (order_number, product_id, quantity, priority, status) VALUES ('KEEP-PG-8', 1, 2, 0, 'planned')"
+            )
+        )
+        await ensure_stage8_columns(conn)
+        await ensure_stage8_columns(conn)
+        row = (await conn.execute(text("SELECT order_number, product_snapshot FROM production_orders"))).one()
+    assert row == ("KEEP-PG-8", None)
+
+
+async def test_postgres_concurrent_order_creation_replays_one_result(postgres_engine):
+    async with postgres_engine.begin() as conn:
+        await ensure_production_schema(conn)
+    sessions = async_sessionmaker(postgres_engine, expire_on_commit=False)
+    async with sessions() as session:
+        product = Product(sku="PG-STAGE8", name="PG Stage 8")
+        component = ProductComponent(code="PG-PART", name="PG Part", unit="pcs")
+        session.add_all([product, component])
+        await session.flush()
+        session.add(ProductionBOMItem(product_id=product.id, component_id=component.id, quantity=1))
+        recipe = ProductionRecipe(
+            code="PG-PLAN",
+            name="PG Plan",
+            product_id=product.id,
+            component_id=component.id,
+            version=1,
+        )
+        session.add(recipe)
+        await session.commit()
+        product_id = product.id
+
+    async def create_once():
+        async with sessions() as session:
+            order, replayed = await create_order(
+                session,
+                operation_id="pg-concurrent-stage8-order",
+                order_number="PG-CONCURRENT-ORDER",
+                product_id=product_id,
+                quantity=3,
+                priority=0,
+                due_at=None,
+                notes=None,
+                actor_user_id=None,
+            )
+            return order.id, replayed
+
+    results = await asyncio.gather(create_once(), create_once())
+    assert results[0][0] == results[1][0]
+    assert sorted(replayed for _, replayed in results) == [False, True]
