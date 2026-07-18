@@ -71,6 +71,24 @@ class Permission(StrEnum):
     PROJECTS_UPDATE = "projects:update"
     PROJECTS_DELETE = "projects:delete"
 
+    # Production domain (Stage 6 skeleton)
+    PRODUCTS_READ = "products:read"
+    PRODUCTS_WRITE = "products:write"
+    MATERIAL_TYPES_READ = "material_types:read"
+    MATERIAL_TYPES_WRITE = "material_types:write"
+    PRINTER_PROFILES_READ = "printer_profiles:read"
+    PRINTER_PROFILES_WRITE = "printer_profiles:write"
+    RECIPES_READ = "recipes:read"
+    RECIPES_WRITE = "recipes:write"
+    PRODUCTION_ORDERS_READ = "production_orders:read"
+    PRODUCTION_ORDERS_CREATE = "production_orders:create"
+    PRODUCTION_ORDERS_UPDATE = "production_orders:update"
+    PRODUCTION_ORDERS_CANCEL = "production_orders:cancel"
+    PLATE_JOBS_READ = "plate_jobs:read"
+    PLATE_JOBS_CREATE = "plate_jobs:create"
+    PLATE_JOBS_CONTROL = "plate_jobs:control"
+    PRODUCTION_QUALITY_CONFIRM = "production_quality:confirm"
+
     # Filaments
     FILAMENTS_READ = "filaments:read"
     FILAMENTS_CREATE = "filaments:create"
@@ -240,6 +258,24 @@ PERMISSION_CATEGORIES = {
         Permission.PROJECTS_UPDATE,
         Permission.PROJECTS_DELETE,
     ],
+    "Production": [
+        Permission.PRODUCTS_READ,
+        Permission.PRODUCTS_WRITE,
+        Permission.MATERIAL_TYPES_READ,
+        Permission.MATERIAL_TYPES_WRITE,
+        Permission.PRINTER_PROFILES_READ,
+        Permission.PRINTER_PROFILES_WRITE,
+        Permission.RECIPES_READ,
+        Permission.RECIPES_WRITE,
+        Permission.PRODUCTION_ORDERS_READ,
+        Permission.PRODUCTION_ORDERS_CREATE,
+        Permission.PRODUCTION_ORDERS_UPDATE,
+        Permission.PRODUCTION_ORDERS_CANCEL,
+        Permission.PLATE_JOBS_READ,
+        Permission.PLATE_JOBS_CREATE,
+        Permission.PLATE_JOBS_CONTROL,
+        Permission.PRODUCTION_QUALITY_CONFIRM,
+    ],
     "Filaments": [
         Permission.FILAMENTS_READ,
         Permission.FILAMENTS_CREATE,
@@ -407,6 +443,24 @@ DEFAULT_GROUPS = {
             Permission.PROJECTS_CREATE.value,
             Permission.PROJECTS_UPDATE.value,
             Permission.PROJECTS_DELETE.value,
+            # Production - operators can manage production work, but the
+            # Stage 6 API still exposes only create/read skeleton operations.
+            Permission.PRODUCTS_READ.value,
+            Permission.PRODUCTS_WRITE.value,
+            Permission.MATERIAL_TYPES_READ.value,
+            Permission.MATERIAL_TYPES_WRITE.value,
+            Permission.PRINTER_PROFILES_READ.value,
+            Permission.PRINTER_PROFILES_WRITE.value,
+            Permission.RECIPES_READ.value,
+            Permission.RECIPES_WRITE.value,
+            Permission.PRODUCTION_ORDERS_READ.value,
+            Permission.PRODUCTION_ORDERS_CREATE.value,
+            Permission.PRODUCTION_ORDERS_UPDATE.value,
+            Permission.PRODUCTION_ORDERS_CANCEL.value,
+            Permission.PLATE_JOBS_READ.value,
+            Permission.PLATE_JOBS_CREATE.value,
+            Permission.PLATE_JOBS_CONTROL.value,
+            Permission.PRODUCTION_QUALITY_CONFIRM.value,
             # Filaments - full access
             Permission.FILAMENTS_READ.value,
             Permission.FILAMENTS_CREATE.value,
@@ -480,6 +534,12 @@ DEFAULT_GROUPS = {
             Permission.QUEUE_READ_OWN.value,
             Permission.LIBRARY_READ_OWN.value,
             Permission.PROJECTS_READ.value,
+            Permission.PRODUCTS_READ.value,
+            Permission.MATERIAL_TYPES_READ.value,
+            Permission.PRINTER_PROFILES_READ.value,
+            Permission.RECIPES_READ.value,
+            Permission.PRODUCTION_ORDERS_READ.value,
+            Permission.PLATE_JOBS_READ.value,
             Permission.FILAMENTS_READ.value,
             Permission.INVENTORY_READ.value,
             Permission.INVENTORY_VIEW_ASSIGNMENTS.value,

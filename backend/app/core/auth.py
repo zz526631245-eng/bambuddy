@@ -77,6 +77,15 @@ _APIKEY_SCOPE_BY_PERMISSION: dict[Permission, str] = {
     Permission.LIBRARY_READ_OWN: "can_read_status",
     Permission.LIBRARY_READ_ALL: "can_read_status",
     Permission.PROJECTS_READ: "can_read_status",
+    # Stage 6 production-domain reads are observational only.  API keys may
+    # use the existing status scope to inspect them; every production write
+    # remains explicitly denied until a dedicated automation scope exists.
+    Permission.PRODUCTS_READ: "can_read_status",
+    Permission.MATERIAL_TYPES_READ: "can_read_status",
+    Permission.PRINTER_PROFILES_READ: "can_read_status",
+    Permission.RECIPES_READ: "can_read_status",
+    Permission.PRODUCTION_ORDERS_READ: "can_read_status",
+    Permission.PLATE_JOBS_READ: "can_read_status",
     Permission.FILAMENTS_READ: "can_read_status",
     Permission.INVENTORY_READ: "can_read_status",
     Permission.INVENTORY_VIEW_ASSIGNMENTS: "can_read_status",
@@ -225,6 +234,18 @@ _APIKEY_DENIED_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.PRINTERS_CREATE,
         Permission.PRINTERS_UPDATE,
         Permission.PRINTERS_DELETE,
+        # Production-domain mutation is user-session only in Stage 6.  A
+        # future stage may introduce a separately reviewed API-key scope.
+        Permission.PRODUCTS_WRITE,
+        Permission.MATERIAL_TYPES_WRITE,
+        Permission.PRINTER_PROFILES_WRITE,
+        Permission.RECIPES_WRITE,
+        Permission.PRODUCTION_ORDERS_CREATE,
+        Permission.PRODUCTION_ORDERS_UPDATE,
+        Permission.PRODUCTION_ORDERS_CANCEL,
+        Permission.PLATE_JOBS_CREATE,
+        Permission.PLATE_JOBS_CONTROL,
+        Permission.PRODUCTION_QUALITY_CONFIRM,
         # ARCHIVES_CREATE / _UPDATE_OWN / _UPDATE_ALL / _DELETE_OWN /
         # _DELETE_ALL moved to the allowlist under `can_manage_archives`
         # (#1888) — split between allow/deny made the whole archive-management

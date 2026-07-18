@@ -162,6 +162,27 @@ async def get_db() -> AsyncSession:
                 pass
 
 
+async def ensure_production_schema(conn):
+    """Register and idempotently create the Stage 6 production schema.
+
+    SQLAlchemy ``create_all(checkfirst=True)`` is the project's established
+    migration path for new tables.  It creates missing production tables on
+    both SQLite and PostgreSQL without altering or dropping existing tables.
+    The explicit helper gives Stage 6 a focused, repeatable migration seam and
+    keeps future column/data migrations in ``run_migrations``.
+    """
+    from backend.app.models import (  # noqa: F401
+        material_type,
+        operation_log,
+        printer_profile,
+        product,
+        production,
+        production_recipe,
+    )
+
+    await conn.run_sync(Base.metadata.create_all)
+
+
 async def init_db():
     # Import models to register them with SQLAlchemy
     from backend.app.models import (  # noqa: F401
@@ -184,9 +205,11 @@ async def init_db():
         location,
         long_lived_token,
         maintenance,
+        material_type,
         notification,
         notification_template,
         oidc_provider,
+        operation_log,
         orca_base_cache,
         pending_upload,
         pipeline_run,
@@ -194,7 +217,11 @@ async def init_db():
         print_log,
         print_queue,
         printer,
+        printer_profile,
         printer_sensor_history,
+        product,
+        production,
+        production_recipe,
         project,
         project_bom,
         settings,
@@ -219,7 +246,7 @@ async def init_db():
     )
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await ensure_production_schema(conn)
 
         # Run migrations for new columns (SQLite doesn't auto-add columns)
         await run_migrations(conn)

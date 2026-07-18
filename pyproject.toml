@@ -78,6 +78,7 @@ filterwarnings = [
 ]
 markers = [
     "docker: marks tests that run in Docker integration environment",
+    "postgres: marks tests that require the dedicated PostgreSQL service",
 ]
 
 [dependency-groups]

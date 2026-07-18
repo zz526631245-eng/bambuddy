@@ -13,15 +13,21 @@ from backend.app.models.local_preset import LocalPreset
 from backend.app.models.location import Location
 from backend.app.models.long_lived_token import LongLivedToken
 from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
+from backend.app.models.material_type import MaterialType
 from backend.app.models.notification import NotificationLog
 from backend.app.models.notification_template import NotificationTemplate
 from backend.app.models.oidc_provider import OIDCProvider, UserOIDCLink
+from backend.app.models.operation_log import OperationLog
 from backend.app.models.orca_base_cache import OrcaBaseProfile
 from backend.app.models.pending_upload import PendingUpload
 from backend.app.models.pipeline_run import PipelineJob, PipelineRun
 from backend.app.models.print_batch import PrintBatch
 from backend.app.models.printer import Printer
+from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.printer_sensor_history import PrinterSensorHistory
+from backend.app.models.product import Product
+from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
+from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.models.project import Project
 from backend.app.models.settings import Settings
 from backend.app.models.slicer_pipeline import SlicerPipeline
@@ -73,6 +79,14 @@ __all__ = [
     "OrcaBaseProfile",
     "PipelineJob",
     "PipelineRun",
+    "Product",
+    "MaterialType",
+    "PrinterProfile",
+    "ProductionRecipe",
+    "ProductionOrder",
+    "ProductionRequirement",
+    "PlateJob",
+    "OperationLog",
     "SlicerPipeline",
     "Spool",
     "SpoolKProfile",
