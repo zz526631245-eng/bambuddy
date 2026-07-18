@@ -40,8 +40,10 @@ export const productionApi={
     request<ProductionOrder>('/production/orders',{method:'POST',body:JSON.stringify({...data,operation_id:operationId('create-order')})}),
   updateOrder:(id:number,data:{priority?:number;due_at?:string|null;notes?:string|null})=>
     request<ProductionOrder>(`/production/orders/${id}`,{method:'PATCH',body:JSON.stringify(data)}),
-  changeStatus:(id:number,action:'pause'|'resume'|'cancel')=>
+  changeStatus:(id:number,action:'pause'|'resume')=>
     request<ProductionOrder>(`/production/orders/${id}/status`,{method:'POST',body:JSON.stringify({operation_id:operationId(action),action})}),
+  cancelOrder:(id:number)=>
+    request<ProductionOrder>(`/production/orders/${id}/cancel`,{method:'POST',body:JSON.stringify({operation_id:operationId('cancel')})}),
   previewJobs:(id:number)=>request<{order_id:number;items:PlateJobPreviewItem[]}>(`/production/orders/${id}/plate-jobs/preview`),
   confirmJobs:(id:number,items:PlateJobPreviewItem[])=>
     request<{order_id:number;items:PlateJob[]}>(`/production/orders/${id}/plate-jobs/confirm`,{method:'POST',body:JSON.stringify({operation_id:operationId('confirm-jobs'),items})}),

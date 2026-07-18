@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   createOrder: vi.fn(),
   getOrder: vi.fn(),
   changeStatus: vi.fn(),
+  cancelOrder: vi.fn(),
   previewJobs: vi.fn(),
   confirmJobs: vi.fn(),
 }));

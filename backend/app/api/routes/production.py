@@ -34,6 +34,7 @@ from backend.app.schemas.production import (
     PlateJobResponse,
     PrinterProfileCreate,
     PrinterProfileResponse,
+    ProductionOrderCancelAction,
     ProductionOrderCreate,
     ProductionOrderDetail,
     ProductionOrderResponse,
@@ -419,17 +420,32 @@ async def update_order_status(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_UPDATE),
 ):
-    if payload.action == "cancel":
-        # Authentication-disabled development instances return ``None`` and are
-        # already trusted by the dependency.  Permission enforcement remains in
-        # the dependency layer for authenticated deployments.
-        pass
     try:
         order, _ = await change_order_status(
             db,
             order_id=order_id,
             operation_id=payload.operation_id,
             action=payload.action,
+            actor_user_id=current_user.id if current_user else None,
+        )
+        return order
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/orders/{order_id}/cancel", response_model=ProductionOrderResponse)
+async def cancel_order(
+    order_id: int,
+    payload: ProductionOrderCancelAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_CANCEL),
+):
+    try:
+        order, _ = await change_order_status(
+            db,
+            order_id=order_id,
+            operation_id=payload.operation_id,
+            action="cancel",
             actor_user_id=current_user.id if current_user else None,
         )
         return order

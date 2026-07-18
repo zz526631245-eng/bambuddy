@@ -1,6 +1,7 @@
 """Stage 6 create/read schemas for production-domain skeleton APIs."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -126,7 +127,7 @@ class ProductionOrderCreate(BaseModel):
     operation_id: str = Field(min_length=1, max_length=100)
     order_number: str = Field(min_length=1, max_length=100)
     product_id: int
-    quantity: int = Field(ge=0)
+    quantity: int = Field(ge=1)
     priority: int = Field(default=0, ge=0)
     due_at: datetime | None = None
     notes: str | None = None
@@ -206,9 +207,15 @@ class ProductionOrderUpdate(BaseModel):
 
 class ProductionOrderStatusAction(BaseModel):
     operation_id: str = Field(min_length=1, max_length=100)
-    action: str
+    action: Literal["pause", "resume"]
 
     _strip_operation = field_validator("operation_id", "action")(_strip_required)
+
+
+class ProductionOrderCancelAction(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
 
 
 class PlateJobPreviewItem(BaseModel):

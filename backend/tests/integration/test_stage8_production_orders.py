@@ -180,8 +180,8 @@ async def test_pause_resume_cancel_and_audit_timeline(async_client: AsyncClient)
     assert resumed.json()["status"] == "planned"
 
     cancelled = await async_client.post(
-        f"/api/v1/production/orders/{order_id}/status",
-        json={"operation_id": "cancel-state", "action": "cancel"},
+        f"/api/v1/production/orders/{order_id}/cancel",
+        json={"operation_id": "cancel-state"},
     )
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
@@ -194,6 +194,19 @@ async def test_pause_resume_cancel_and_audit_timeline(async_client: AsyncClient)
         "production_order_resumed",
         "production_order_cancelled",
     ]
+
+
+async def test_order_quantity_must_be_positive(async_client: AsyncClient):
+    response = await async_client.post(
+        "/api/v1/production/orders",
+        json={
+            "operation_id": "zero-quantity",
+            "order_number": "ORDER-ZERO",
+            "product_id": 1,
+            "quantity": 0,
+        },
+    )
+    assert response.status_code == 422
 
 
 async def test_order_requires_complete_product_parts_and_print_plans(async_client: AsyncClient):

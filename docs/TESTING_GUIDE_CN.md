@@ -8,7 +8,7 @@
 python -m pytest backend/tests/unit/test_production_accounting.py backend/tests/unit/test_production_models.py backend/tests/unit/test_production_migrations.py backend/tests/integration/test_production_api.py backend/tests/integration/test_stage7_master_data.py backend/tests/integration/test_stage8_production_orders.py -q
 ```
 
-预期：44 项通过。
+预期：45 项通过。
 
 ## PostgreSQL 16
 
@@ -50,4 +50,3 @@ npm.cmd run test:run
 5. 预览并确认任务草稿，确认页面明确显示未选择打印机。
 6. 重复点击或重发同一操作编号，确认不生成重复记录。
 7. 暂停、恢复、取消订单，确认操作时间线完整。
-
