@@ -113,9 +113,7 @@ async def test_sqlite_stage7_to_stage8_columns_preserve_rows_and_repeat(tmp_path
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stage7-to-8.db'}")
     async with engine.begin() as conn:
         await conn.execute(
-            text(
-                "CREATE TABLE production_recipes (id INTEGER PRIMARY KEY, code VARCHAR(100), name VARCHAR(255))"
-            )
+            text("CREATE TABLE production_recipes (id INTEGER PRIMARY KEY, code VARCHAR(100), name VARCHAR(255))")
         )
         await conn.execute(
             text(

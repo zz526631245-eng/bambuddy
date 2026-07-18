@@ -129,9 +129,7 @@ async def create_order(
         exact_required = quantity * item.quantity
         required = round(exact_required)
         if abs(exact_required - required) > 1e-9:
-            raise ProductionOrderError(
-                f"零件“{item.component.name}”计算结果不是整数，请检查每套需要数量"
-            )
+            raise ProductionOrderError(f"零件“{item.component.name}”计算结果不是整数，请检查每套需要数量")
         prepared.append((item, recipe, required))
     if missing:
         raise ProductionOrderError("以下零件还没有打印方案：" + "、".join(missing))

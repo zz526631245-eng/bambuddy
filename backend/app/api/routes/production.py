@@ -252,13 +252,16 @@ async def create_recipe(
 ):
     await _require_row(db, Product, payload.product_id, "Product not found")
     component = await _require_row(db, ProductComponent, payload.component_id, "Product component not found")
-    if component and not (
-        await db.execute(
-            select(ProductComponent.id)
-            .join(ProductionBOMItem, ProductionBOMItem.component_id == ProductComponent.id)
-            .where(ProductComponent.id == component.id, ProductionBOMItem.product_id == payload.product_id)
-        )
-    ).scalar_one_or_none():
+    if (
+        component
+        and not (
+            await db.execute(
+                select(ProductComponent.id)
+                .join(ProductionBOMItem, ProductionBOMItem.component_id == ProductComponent.id)
+                .where(ProductComponent.id == component.id, ProductionBOMItem.product_id == payload.product_id)
+            )
+        ).scalar_one_or_none()
+    ):
         raise HTTPException(422, "该零件不在这个产品的零件清单中")
     await _require_row(db, MaterialType, payload.material_type_id, "Material type not found")
     await _require_row(db, PrinterProfile, payload.printer_profile_id, "Printer profile not found")
@@ -298,13 +301,16 @@ async def update_recipe(
         raise HTTPException(404, "Recipe not found")
     await _require_row(db, Product, payload.product_id, "Product not found")
     component = await _require_row(db, ProductComponent, payload.component_id, "Product component not found")
-    if component and not (
-        await db.execute(
-            select(ProductComponent.id)
-            .join(ProductionBOMItem, ProductionBOMItem.component_id == ProductComponent.id)
-            .where(ProductComponent.id == component.id, ProductionBOMItem.product_id == payload.product_id)
-        )
-    ).scalar_one_or_none():
+    if (
+        component
+        and not (
+            await db.execute(
+                select(ProductComponent.id)
+                .join(ProductionBOMItem, ProductionBOMItem.component_id == ProductComponent.id)
+                .where(ProductComponent.id == component.id, ProductionBOMItem.product_id == payload.product_id)
+            )
+        ).scalar_one_or_none()
+    ):
         raise HTTPException(422, "该零件不在这个产品的零件清单中")
     await _require_row(db, MaterialType, payload.material_type_id, "Material type not found")
     await _require_row(db, PrinterProfile, payload.printer_profile_id, "Printer profile not found")
