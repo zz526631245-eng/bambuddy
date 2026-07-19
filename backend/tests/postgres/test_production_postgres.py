@@ -318,11 +318,7 @@ async def test_postgres_concurrent_plate_job_confirmation_never_overallocates(
     async with sessions() as session:
         requirement = await session.get(ProductionRequirement, requirement_id)
         jobs = list(
-            (
-                await session.execute(
-                    select(PlateJob).where(PlateJob.requirement_id == requirement_id)
-                )
-            ).scalars()
+            (await session.execute(select(PlateJob).where(PlateJob.requirement_id == requirement_id))).scalars()
         )
     total_planned = sum(job.planned_quantity for job in jobs)
     assert requirement is not None
