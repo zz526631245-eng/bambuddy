@@ -10,7 +10,7 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import MetaData, inspect, text
+from sqlalchemy import MetaData, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -19,8 +19,9 @@ from backend.app.core.database import Base, ensure_production_schema, ensure_sta
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.product import Product
 from backend.app.models.product_master import ProductComponent, ProductionBOMItem
-from backend.app.models.production import PRODUCTION_TABLE_NAMES, ProductionOrder
+from backend.app.models.production import PRODUCTION_TABLE_NAMES, PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.production_recipe import ProductionRecipe
+from backend.app.services import production_order_service
 from backend.app.services.production_order_service import create_order
 
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
@@ -240,3 +241,90 @@ async def test_postgres_concurrent_order_creation_replays_one_result(postgres_en
     results = await asyncio.gather(create_once(), create_once())
     assert results[0][0] == results[1][0]
     assert sorted(replayed for _, replayed in results) == [False, True]
+
+
+async def test_postgres_concurrent_plate_job_confirmation_never_overallocates(
+    postgres_engine,
+):
+    async with postgres_engine.begin() as conn:
+        await ensure_production_schema(conn)
+    sessions = async_sessionmaker(postgres_engine, expire_on_commit=False)
+    async with sessions() as session:
+        product = Product(sku="PG-CONFIRM", name="PG Confirm")
+        component = ProductComponent(code="PG-CONFIRM-PART", name="PG Confirm Part", unit="pcs")
+        session.add_all([product, component])
+        await session.flush()
+        session.add(ProductionBOMItem(product_id=product.id, component_id=component.id, quantity=1))
+        session.add(
+            ProductionRecipe(
+                code="PG-CONFIRM-PLAN",
+                name="PG Confirm Plan",
+                product_id=product.id,
+                component_id=component.id,
+                version=1,
+            )
+        )
+        await session.commit()
+        product_id = product.id
+
+    async with sessions() as session:
+        order, _ = await create_order(
+            session,
+            operation_id="pg-confirm-create-order",
+            order_number="PG-CONFIRM-ORDER",
+            product_id=product_id,
+            quantity=3,
+            priority=0,
+            due_at=None,
+            notes=None,
+            actor_user_id=None,
+        )
+        order_id = order.id
+        requirement_id = order.requirements[0].id
+
+    start = asyncio.Event()
+    ready = 0
+
+    async def confirm_once(operation_id: str):
+        nonlocal ready
+        ready += 1
+        if ready == 2:
+            start.set()
+        await asyncio.wait_for(start.wait(), timeout=5)
+        async with sessions() as session:
+            try:
+                return await production_order_service.confirm_plate_jobs(
+                    session,
+                    order_id=order_id,
+                    operation_id=operation_id,
+                    items=[
+                        type(
+                            "PreviewItem",
+                            (),
+                            {
+                                "requirement_id": requirement_id,
+                                "printer_profile_id": None,
+                                "planned_quantity": 3,
+                            },
+                        )()
+                    ],
+                    actor_user_id=None,
+                )
+            except production_order_service.ProductionOrderError:
+                return [], False
+
+    await asyncio.gather(confirm_once("pg-confirm-a"), confirm_once("pg-confirm-b"))
+
+    async with sessions() as session:
+        requirement = await session.get(ProductionRequirement, requirement_id)
+        jobs = list(
+            (
+                await session.execute(
+                    select(PlateJob).where(PlateJob.requirement_id == requirement_id)
+                )
+            ).scalars()
+        )
+    total_planned = sum(job.planned_quantity for job in jobs)
+    assert requirement is not None
+    assert total_planned <= requirement.required_quantity
+    assert requirement.reserved_quantity == total_planned

@@ -65,6 +65,58 @@ async def test_image_allowlist_safe_name_and_round_trip_export(async_client: Asy
     assert len(detail.json()["images"]) == 1
 
 
+async def test_product_archive_round_trip_preserves_recipe_component_link(async_client: AsyncClient):
+    product = (
+        await async_client.post(
+            "/api/v1/products",
+            json={"sku": "ROUNDTRIP-7", "name": "Round-trip Product"},
+        )
+    ).json()
+    component = (
+        await async_client.post(
+            "/api/v1/products/components",
+            json={"code": "ROUNDTRIP-PART-7", "name": "Round-trip Part", "unit": "个"},
+        )
+    ).json()
+    await async_client.post(
+        f"/api/v1/products/{product['id']}/bom",
+        json={"component_id": component["id"], "quantity": 2},
+    )
+    recipe = (
+        await async_client.post(
+            "/api/v1/production/recipes",
+            json={
+                "code": "ROUNDTRIP-PLAN-7",
+                "name": "Round-trip Plan",
+                "product_id": product["id"],
+                "component_id": component["id"],
+                "version": 1,
+            },
+        )
+    ).json()
+
+    exported = await async_client.get(f"/api/v1/products/{product['id']}/export")
+    assert exported.status_code == 200
+    assert (await async_client.delete(f"/api/v1/production/recipes/{recipe['id']}")).status_code == 204
+    assert (await async_client.delete(f"/api/v1/products/{product['id']}")).status_code == 204
+
+    imported = await async_client.post(
+        "/api/v1/products/import/archive",
+        files={"file": ("product.zip", exported.content, "application/zip")},
+    )
+    assert imported.status_code == 201
+    imported_product_id = imported.json()["id"]
+    imported_detail = (await async_client.get(f"/api/v1/products/{imported_product_id}")).json()
+    imported_recipes = [
+        item
+        for item in (await async_client.get("/api/v1/production/recipes")).json()
+        if item["product_id"] == imported_product_id
+    ]
+
+    assert len(imported_recipes) == 1
+    assert imported_recipes[0]["component_id"] == imported_detail["bom_items"][0]["component_id"]
+
+
 async def test_material_normalization_profile_fields_recipe_compatibility_and_no_queue(
     async_client: AsyncClient, db_session: AsyncSession
 ):

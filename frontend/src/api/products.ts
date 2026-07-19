@@ -6,6 +6,16 @@ export interface Component { id:number; code:string; name:string; description?:s
 export interface BOMItem { id:number; product_id:number; component_id:number; quantity:number; notes?:string|null }
 export type ProductInput = Pick<Product, 'sku'|'name'> & Partial<Pick<Product,'description'|'is_active'>>;
 
+const authHeaders = (): Record<string,string> => {
+  const token=getAuthToken();
+  return token ? {Authorization:`Bearer ${token}`} : {};
+};
+
+const responseError = async (response:Response, fallback:string) => {
+  const body=await response.json().catch(()=>({}));
+  return new Error(body.detail||fallback);
+};
+
 export const productsApi = {
   list: () => request<Product[]>('/products'),
   get: (id:number) => request<Product>(`/products/${id}`),
@@ -16,8 +26,8 @@ export const productsApi = {
   createComponent: (data:Omit<Component,'id'>) => request<Component>('/products/components', {method:'POST', body:JSON.stringify(data)}),
   addBom: (id:number, data:{component_id:number;quantity:number;notes?:string}) => request<BOMItem>(`/products/${id}/bom`, {method:'POST', body:JSON.stringify(data)}),
   deleteBom: (id:number,itemId:number) => request<void>(`/products/${id}/bom/${itemId}`, {method:'DELETE'}),
-  uploadImage: async (id:number,file:File) => { const form=new FormData(); form.append('file',file); const headers:Record<string,string>={}; const token=getAuthToken(); if(token) headers.Authorization=`Bearer ${token}`; const response=await fetch(`/api/v1/products/${id}/images`,{method:'POST',body:form,headers}); if(!response.ok) throw new Error((await response.json()).detail||'Upload failed'); return response.json() as Promise<ProductImage>; },
-  importArchive: async (file:File) => { const form=new FormData(); form.append('file',file); const headers:Record<string,string>={}; const token=getAuthToken(); if(token) headers.Authorization=`Bearer ${token}`; const response=await fetch('/api/v1/products/import/archive',{method:'POST',body:form,headers}); if(!response.ok) throw new Error((await response.json()).detail||'Import failed'); return response.json() as Promise<Product>; },
-  imageUrl: (id:number,imageId:number) => `/api/v1/products/${id}/images/${imageId}/file`,
-  exportUrl: (id:number) => `/api/v1/products/${id}/export`,
+  uploadImage: async (id:number,file:File) => { const form=new FormData(); form.append('file',file); const response=await fetch(`/api/v1/products/${id}/images`,{method:'POST',body:form,headers:authHeaders()}); if(!response.ok) throw await responseError(response,'Upload failed'); return response.json() as Promise<ProductImage>; },
+  importArchive: async (file:File) => { const form=new FormData(); form.append('file',file); const response=await fetch('/api/v1/products/import/archive',{method:'POST',body:form,headers:authHeaders()}); if(!response.ok) throw await responseError(response,'Import failed'); return response.json() as Promise<Product>; },
+  getImageBlob: async (id:number,imageId:number) => { const response=await fetch(`/api/v1/products/${id}/images/${imageId}/file`,{headers:authHeaders()}); if(!response.ok) throw await responseError(response,'Image load failed'); return response.blob(); },
+  exportArchive: async (id:number) => { const response=await fetch(`/api/v1/products/${id}/export`,{headers:authHeaders()}); if(!response.ok) throw await responseError(response,'Export failed'); const disposition=response.headers.get('Content-Disposition'); const filename=disposition?.match(/filename="?([^";]+)"?/)?.[1]||`product-${id}.bambuddy-product.zip`; return {blob:await response.blob(),filename}; },
 };

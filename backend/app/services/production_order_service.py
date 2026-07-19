@@ -76,6 +76,24 @@ async def _load_order(db: AsyncSession, order_id: int) -> ProductionOrder | None
     ).scalar_one_or_none()
 
 
+async def _load_order_for_update(db: AsyncSession, order_id: int) -> ProductionOrder | None:
+    """Lock an order while mutating its requirement reservations.
+
+    PostgreSQL serializes concurrent confirmations on the order row. SQLite
+    ignores ``FOR UPDATE`` and continues to rely on its single-writer lock.
+    """
+    return (
+        await db.execute(
+            select(ProductionOrder)
+            .where(ProductionOrder.id == order_id)
+            .with_for_update()
+            .options(
+                selectinload(ProductionOrder.requirements).selectinload(ProductionRequirement.plate_jobs),
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def create_order(
     db: AsyncSession,
     *,
@@ -338,7 +356,7 @@ async def confirm_plate_jobs(
         ids = list((replay.payload or {}).get("plate_job_ids", []))
         jobs = list((await db.execute(select(PlateJob).where(PlateJob.id.in_(ids)).order_by(PlateJob.id))).scalars())
         return jobs, True
-    order = await _load_order(db, order_id)
+    order = await _load_order_for_update(db, order_id)
     if not order:
         raise ProductionOrderError("生产订单不存在")
     if order.status != OrderStatus.PLANNED.value:

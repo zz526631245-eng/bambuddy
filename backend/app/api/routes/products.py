@@ -319,6 +319,7 @@ async def export_product(
         .scalars()
         .all()
     )
+    component_codes = {item.component_id: item.component.code for item in product.bom_items}
     manifest = {
         "format": "bambuddy-product-v1",
         "product": {
@@ -346,6 +347,7 @@ async def export_product(
                 "code": r.code,
                 "name": r.name,
                 "version": r.version,
+                "component_code": component_codes.get(r.component_id),
                 "material_code": r.material_type.code if r.material_type else None,
                 "printer_profile_code": r.printer_profile.code if r.printer_profile else None,
                 "library_file_id": r.library_file_id,
@@ -396,6 +398,7 @@ async def import_product(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(409, "Product SKU already exists")
+    components_by_code: dict[str, ProductComponent] = {}
     for row in manifest.get("bom", []):
         code = str(row["component_code"]).strip().upper()
         component = (
@@ -405,6 +408,7 @@ async def import_product(
             component = ProductComponent(code=code, name=row["component_name"], unit=row.get("unit", "pcs"))
             db.add(component)
             await db.flush()
+        components_by_code[code] = component
         db.add(
             ProductionBOMItem(
                 product_id=product.id, component_id=component.id, quantity=row["quantity"], notes=row.get("notes")
@@ -437,6 +441,8 @@ async def import_product(
             )
         )
     for row in manifest.get("recipes", []):
+        component_code = str(row.get("component_code") or "").strip().upper()
+        component = components_by_code.get(component_code)
         material = (
             (
                 await db.execute(select(MaterialType).where(MaterialType.code == row.get("material_code")))
@@ -455,6 +461,7 @@ async def import_product(
             code=row["code"],
             name=row["name"],
             product_id=product.id,
+            component_id=component.id if component else None,
             material_type_id=material.id if material else None,
             printer_profile_id=profile.id if profile else None,
             library_file_id=None,
