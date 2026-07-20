@@ -31,6 +31,7 @@ npm-debug.log*
 *.db-journal
 *.db-wal
 *.db-shm
+*.db.*
 
 # Archive files (user data)
 archive/

@@ -5,7 +5,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.compat import StrEnum
@@ -52,6 +64,7 @@ PRODUCTION_TABLE_NAMES = {
     "production_bom_items",
     "production_recipe_profiles",
     "material_type_spool_mappings",
+    "slice_artifacts",
 }
 
 
@@ -74,9 +87,11 @@ class ProductionOrder(Base):
     status: Mapped[str] = mapped_column(String(30), default=OrderStatus.DRAFT.value, nullable=False)
     due_at: Mapped[datetime | None] = mapped_column(DateTime)
     notes: Mapped[str | None] = mapped_column(Text)
+    recalculation_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     product_snapshot: Mapped[dict | None] = mapped_column(JSON)
     bom_snapshot: Mapped[list | None] = mapped_column(JSON)
     recipe_snapshot: Mapped[list | None] = mapped_column(JSON)
+    product_file_snapshot: Mapped[dict | None] = mapped_column(JSON)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -110,7 +125,8 @@ class ProductionRequirement(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("production_orders.id", ondelete="CASCADE"), index=True)
-    recipe_id: Mapped[int] = mapped_column(ForeignKey("production_recipes.id", ondelete="RESTRICT"), index=True)
+    recipe_id: Mapped[int | None] = mapped_column(ForeignKey("production_recipes.id", ondelete="RESTRICT"), nullable=True, index=True)
+    product_file_id: Mapped[int | None] = mapped_column(ForeignKey("product_files.id", ondelete="RESTRICT"), nullable=True, index=True)
     component_id: Mapped[int | None] = mapped_column(
         ForeignKey("product_components.id", ondelete="RESTRICT"), nullable=True, index=True
     )
@@ -154,14 +170,34 @@ class PlateJob(Base):
     )
     planned_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default=PlateJobStatus.DRAFT.value, nullable=False)
+    # Stage 10 simulated slicing state. These fields store the deterministic
+    # plan and its source association; they never imply that a print was sent.
+    slice_status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    slice_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    slice_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slice_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    sliced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     requirement: Mapped[ProductionRequirement] = relationship(back_populates="plate_jobs")
     printer_profile: Mapped[PrinterProfile | None] = relationship(back_populates="plate_jobs")
+    queue_item: Mapped[PrintQueueItem | None] = relationship(
+        back_populates="production_plate_job",
+        foreign_keys=[queue_item_id],
+        uselist=False,
+    )
+    virtual_printer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("virtual_printers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Multi-plate fixed source files expand into one physical job per product
+    # set and source-plate role.  Single-plate jobs keep the default values.
+    source_plate_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    product_set_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 if TYPE_CHECKING:
+    from backend.app.models.print_queue import PrintQueueItem
     from backend.app.models.printer_profile import PrinterProfile
     from backend.app.models.product import Product
     from backend.app.models.production_recipe import ProductionRecipe

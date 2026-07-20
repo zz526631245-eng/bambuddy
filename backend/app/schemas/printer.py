@@ -75,6 +75,7 @@ class PrinterUpdate(BaseModel):
     camera_rotation: int | None = None  # 0, 90, 180, 270 degrees
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
+    loaded_filaments: list[dict] | None = None
 
 
 class PrinterResponse(PrinterBase):
@@ -91,6 +92,7 @@ class PrinterResponse(PrinterBase):
     plate_detection_roi: PlateDetectionROI | None = None
     created_at: datetime
     updated_at: datetime
+    loaded_filaments: list[dict] = []
 
     class Config:
         from_attributes = True
@@ -117,6 +119,7 @@ class PrinterResponse(PrinterBase):
             "plate_detection_enabled": printer.plate_detection_enabled,
             "created_at": printer.created_at,
             "updated_at": printer.updated_at,
+            "loaded_filaments": printer.loaded_filaments or [],
         }
         # Build ROI object if any ROI field is set
         if any(

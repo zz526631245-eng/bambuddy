@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.core.database import Base
@@ -66,5 +66,14 @@ class VirtualPrinter(Base):
     )  # opt-in: user must explicitly enable; auto-detect only runs then
     serial_suffix: Mapped[str] = mapped_column(String(9), default="391800001")  # unique per printer
     position: Mapped[int] = mapped_column(Integer, default=0)
+    build_width_mm: Mapped[float] = mapped_column(Float, default=256, nullable=False)
+    build_depth_mm: Mapped[float] = mapped_column(Float, default=256, nullable=False)
+    build_height_mm: Mapped[float] = mapped_column(Float, default=256, nullable=False)
+    units_per_plate_capacity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # Same capability contract as a real printer.  These values are used only
+    # by the software allocator and never trigger printer communication.
+    supported_materials: Mapped[list] = mapped_column(JSON, default=list)
+    supported_colors: Mapped[list] = mapped_column(JSON, default=list)
+    loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

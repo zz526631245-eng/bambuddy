@@ -42,6 +42,13 @@ class VirtualPrinterCreate(BaseModel):
     gcode_injection: bool = False
     bind_ip: str | None = None
     remote_interface_ip: str | None = None
+    build_width_mm: float = 256
+    build_depth_mm: float = 256
+    build_height_mm: float = 256
+    units_per_plate_capacity: int = 1
+    supported_materials: list[str] = []
+    supported_colors: list[str] = []
+    loaded_filaments: list[dict] = []
 
 
 class VirtualPrinterUpdate(BaseModel):
@@ -57,6 +64,13 @@ class VirtualPrinterUpdate(BaseModel):
     bind_ip: str | None = None
     remote_interface_ip: str | None = None
     tailscale_disabled: bool | None = None
+    build_width_mm: float | None = None
+    build_depth_mm: float | None = None
+    build_height_mm: float | None = None
+    units_per_plate_capacity: int | None = None
+    supported_materials: list[str] | None = None
+    supported_colors: list[str] | None = None
+    loaded_filaments: list[dict] | None = None
 
 
 def _resolve_printer_model(printer_model: str | None) -> str | None:
@@ -114,6 +128,13 @@ async def _vp_to_dict(vp, db: AsyncSession, status: dict | None = None) -> dict:
         "remote_interface_ip": vp.remote_interface_ip,
         "tailscale_disabled": vp.tailscale_disabled,
         "position": vp.position,
+        "build_width_mm": vp.build_width_mm,
+        "build_depth_mm": vp.build_depth_mm,
+        "build_height_mm": vp.build_height_mm,
+        "units_per_plate_capacity": vp.units_per_plate_capacity,
+        "supported_materials": vp.supported_materials or [],
+        "supported_colors": vp.supported_colors or [],
+        "loaded_filaments": vp.loaded_filaments or [],
         "status": status or {"running": False, "pending_files": 0},
     }
 
@@ -248,6 +269,13 @@ async def create_virtual_printer(
         gcode_injection=body.gcode_injection,
         bind_ip=body.bind_ip,
         remote_interface_ip=body.remote_interface_ip,
+        build_width_mm=body.build_width_mm,
+        build_depth_mm=body.build_depth_mm,
+        build_height_mm=body.build_height_mm,
+        units_per_plate_capacity=body.units_per_plate_capacity,
+        supported_materials=[str(value).strip().upper() for value in body.supported_materials if str(value).strip()],
+        supported_colors=[str(value).strip().upper() for value in body.supported_colors if str(value).strip()],
+        loaded_filaments=body.loaded_filaments,
         serial_suffix=new_suffix,
         position=next_pos,
     )
@@ -431,6 +459,20 @@ async def update_virtual_printer(
         vp.remote_interface_ip = body.remote_interface_ip
     if body.tailscale_disabled is not None:
         vp.tailscale_disabled = body.tailscale_disabled
+    if body.build_width_mm is not None:
+        vp.build_width_mm = body.build_width_mm
+    if body.build_depth_mm is not None:
+        vp.build_depth_mm = body.build_depth_mm
+    if body.build_height_mm is not None:
+        vp.build_height_mm = body.build_height_mm
+    if body.units_per_plate_capacity is not None:
+        vp.units_per_plate_capacity = body.units_per_plate_capacity
+    if body.supported_materials is not None:
+        vp.supported_materials = [str(value).strip().upper() for value in body.supported_materials if str(value).strip()]
+    if body.supported_colors is not None:
+        vp.supported_colors = [str(value).strip().upper() for value in body.supported_colors if str(value).strip()]
+    if body.loaded_filaments is not None:
+        vp.loaded_filaments = body.loaded_filaments
 
     # Auto-inherit model when switching to proxy mode with existing target printer
     if body.mode == "proxy" and body.model is None and body.target_printer_id is None and vp.target_printer_id:

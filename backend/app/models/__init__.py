@@ -26,6 +26,7 @@ from backend.app.models.printer import Printer
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.printer_sensor_history import PrinterSensorHistory
 from backend.app.models.product import Product
+from backend.app.models.product_file import ProductFile
 from backend.app.models.product_master import (
     MaterialTypeSpoolMapping,
     ProductComponent,
@@ -33,6 +34,7 @@ from backend.app.models.product_master import (
     ProductionBOMItem,
 )
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
+from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.models.project import Project
 from backend.app.models.settings import Settings
@@ -96,6 +98,7 @@ __all__ = [
     "ProductionOrder",
     "ProductionRequirement",
     "PlateJob",
+    "SliceArtifact",
     "OperationLog",
     "SlicerPipeline",
     "Spool",

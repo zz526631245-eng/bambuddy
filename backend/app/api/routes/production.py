@@ -5,7 +5,8 @@ communicates with a printer.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from fastapi.responses import FileResponse
+from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,6 +22,7 @@ from backend.app.models.product import Product
 from backend.app.models.product_master import MaterialTypeSpoolMapping, ProductComponent, ProductionBOMItem
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.production_recipe import ProductionRecipe, production_recipe_profiles
+from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.slicer_pipeline import SlicerPipeline
 from backend.app.models.spool import Spool
 from backend.app.models.user import User
@@ -43,15 +45,29 @@ from backend.app.schemas.production import (
     ProductionRecipeCreate,
     ProductionRecipeResponse,
     ProductionRequirementResponse,
+    ProductOrderSummaryResponse,
+    RealSliceRequest,
+    SliceArtifactResponse,
 )
+from backend.app.services.production_allocator import allocate_plate_jobs
 from backend.app.services.production_order_service import (
     ProductionOrderError,
+    cancel_plate_job,
     change_order_status,
     confirm_plate_jobs,
     create_order as create_production_order,
+    delete_order as delete_production_order,
+    delete_plate_job,
     order_detail,
     preview_plate_jobs,
+    product_order_summaries,
     update_order as update_production_order,
+)
+from backend.app.services.production_slicer import (
+    SlicePlanningError,
+    _absolute_library_path,
+    slice_plate_job,
+    slice_plate_job_real,
 )
 
 router = APIRouter(prefix="/production", tags=["production"])
@@ -361,6 +377,14 @@ async def list_orders(
     return list((await db.execute(select(ProductionOrder).order_by(ProductionOrder.id))).scalars().all())
 
 
+@router.get("/product-summaries", response_model=list[ProductOrderSummaryResponse])
+async def list_product_order_summaries(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_READ),
+):
+    return await product_order_summaries(db)
+
+
 @router.post("/orders", response_model=ProductionOrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     payload: ProductionOrderCreate,
@@ -488,9 +512,58 @@ async def confirm_order_plate_jobs(
         )
     except ProductionOrderError as exc:
         raise HTTPException(409, str(exc)) from exc
+    await allocate_plate_jobs(db, plate_job_ids=[job.id for job in jobs])
+    # Stage 10 performs a deterministic, simulation-only slice after a virtual
+    # printer has been selected. Real printer dispatch remains blocked.
+    for job in jobs:
+        await slice_plate_job(db, job.id)
+    jobs = list(
+        (
+            await db.execute(
+                select(PlateJob).where(PlateJob.id.in_([job.id for job in jobs])).order_by(PlateJob.id)
+            )
+        ).scalars()
+    )
     if replayed:
         response.status_code = status.HTTP_200_OK
+    response.headers["X-Idempotent-Replay"] = "true" if replayed else "false"
     return {"order_id": order_id, "items": jobs}
+
+
+@router.delete("/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_order(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_UPDATE),
+):
+    try:
+        await delete_production_order(db, order_id)
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/plate-jobs/{plate_job_id}/cancel", response_model=PlateJobResponse)
+async def cancel_plate_job_route(
+    plate_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+):
+    try:
+        return await cancel_plate_job(db, plate_job_id)
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.delete("/plate-jobs/{plate_job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_plate_job_route(
+    plate_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+):
+    try:
+        await delete_plate_job(db, plate_job_id)
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/requirements", response_model=list[ProductionRequirementResponse])
@@ -507,6 +580,105 @@ async def list_plate_jobs(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
     return list((await db.execute(select(PlateJob).order_by(PlateJob.id))).scalars().all())
+
+
+@router.get("/slice-artifacts", response_model=list[SliceArtifactResponse])
+async def list_slice_artifacts(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    """List reusable real-slice outputs without exposing storage paths."""
+
+    artifacts = list(
+        (
+            await db.execute(select(SliceArtifact).order_by(desc(SliceArtifact.created_at), SliceArtifact.id.desc()))
+        )
+        .scalars()
+        .all()
+    )
+    output_files = {
+        artifact.output_library_file_id: await db.get(LibraryFile, artifact.output_library_file_id)
+        for artifact in artifacts
+    }
+    return [
+        {
+            **{key: value for key, value in artifact.__dict__.items() if not key.startswith("_")},
+            "output_file_name": output_files[artifact.output_library_file_id].filename
+            if output_files[artifact.output_library_file_id]
+            else None,
+        }
+        for artifact in artifacts
+    ]
+
+
+@router.get("/slice-artifacts/{artifact_id}/download")
+async def download_slice_artifact(
+    artifact_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    """Download a previously generated G-code 3MF from the slice library."""
+
+    artifact = await db.get(SliceArtifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="切片结果不存在")
+    output = await db.get(LibraryFile, artifact.output_library_file_id)
+    path = _absolute_library_path(output.file_path if output else None)
+    if output is None or path is None or output.deleted_at or not path.exists():
+        raise HTTPException(status_code=410, detail="切片结果文件已丢失，不能下载")
+    return FileResponse(
+        path,
+        filename=output.filename,
+        media_type="application/octet-stream",
+    )
+
+
+@router.post("/slice-artifacts/{artifact_id}/dispatch")
+async def dispatch_slice_artifact(
+    artifact_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+):
+    """Keep the future direct-send contract explicit but locked before Stage 14."""
+
+    if await db.get(SliceArtifact, artifact_id) is None:
+        raise HTTPException(status_code=404, detail="切片结果不存在")
+    raise HTTPException(status_code=409, detail="阶段14前禁止发送真实打印；当前只能下载或复用切片结果")
+
+
+@router.post("/plate-jobs/{plate_job_id}/slice", response_model=PlateJobResponse)
+async def retry_plate_job_slice(
+    plate_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+):
+    """Retry the simulation-only slice for an allocated virtual-printer job."""
+
+    return await slice_plate_job(db, plate_job_id)
+
+
+@router.post("/plate-jobs/{plate_job_id}/real-slice", response_model=PlateJobResponse)
+async def real_slice_plate_job(
+    plate_job_id: int,
+    payload: RealSliceRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+):
+    """Run Bambu Studio/OrcaSlicer against the product's original 3MF.
+
+    The sidecar receives embedded settings; this endpoint never sends the
+    resulting G-code to a printer. A target printer override changes only the
+    embedded printer identity and leaves process/object settings intact.
+    """
+    try:
+        return await slice_plate_job_real(
+            db,
+            plate_job_id,
+            target_printer_preset=payload.target_printer_preset if payload else None,
+            target_printer_model=payload.target_printer_model if payload else None,
+        )
+    except SlicePlanningError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/operations", response_model=list[OperationLogResponse])

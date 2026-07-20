@@ -19,6 +19,7 @@ from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
+from backend.app.models.production import PlateJob
 from backend.app.models.settings import Settings
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.spool_assignment import SpoolAssignment
@@ -2465,6 +2466,19 @@ class PrintScheduler:
         - archive_id: Print from an existing archive
         - library_file_id: Print from a library file (file manager)
         """
+        production_job_id = (
+            await db.execute(select(PlateJob.id).where(PlateJob.queue_item_id == item.id))
+        ).scalar_one_or_none()
+        if production_job_id is not None:
+            item.manual_start = True
+            await db.commit()
+            logger.warning(
+                "Blocked stage 9 production queue item %s (plate job %s) before printer communication",
+                item.id,
+                production_job_id,
+            )
+            return
+
         logger.info("Starting queue item %s", item.id)
 
         # Get printer first (needed for both paths)

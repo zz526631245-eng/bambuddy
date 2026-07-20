@@ -69,6 +69,8 @@ class PrinterProfileCreate(BaseModel):
     profile_group: str | None = Field(default=None, max_length=100)
     auto_production_enabled: bool = False
     is_active: bool = True
+    supported_materials: list[str] = []
+    supported_colors: list[str] = []
 
     _strip_fields = field_validator("code", "name", "printer_model")(_strip_required)
 
@@ -84,6 +86,8 @@ class PrinterProfileResponse(_FromAttributes):
     profile_group: str | None
     auto_production_enabled: bool
     is_active: bool
+    supported_materials: list[str]
+    supported_colors: list[str]
     created_at: datetime
     updated_at: datetime
 
@@ -125,14 +129,20 @@ class ProductionRecipeResponse(_FromAttributes):
 
 class ProductionOrderCreate(BaseModel):
     operation_id: str = Field(min_length=1, max_length=100)
-    order_number: str = Field(min_length=1, max_length=100)
+    order_number: str | None = Field(default=None, max_length=100)
     product_id: int
+    product_file_id: int | None = None
     quantity: int = Field(ge=1)
     priority: int = Field(default=0, ge=0)
     due_at: datetime | None = None
     notes: str | None = None
 
-    _strip_order_fields = field_validator("operation_id", "order_number")(_strip_required)
+    _strip_operation_id = field_validator("operation_id")(_strip_required)
+
+    @field_validator("order_number")
+    @classmethod
+    def normalize_order_number(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
 
 class ProductionOrderResponse(_FromAttributes):
@@ -144,9 +154,11 @@ class ProductionOrderResponse(_FromAttributes):
     status: str
     due_at: datetime | None
     notes: str | None
+    recalculation_required: bool = False
     product_snapshot: dict | None
     bom_snapshot: list | None
     recipe_snapshot: list | None
+    product_file_snapshot: dict | None = None
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
@@ -155,7 +167,8 @@ class ProductionOrderResponse(_FromAttributes):
 class ProductionRequirementResponse(_FromAttributes):
     id: int
     order_id: int
-    recipe_id: int
+    recipe_id: int | None
+    product_file_id: int | None = None
     component_id: int | None
     unit_quantity: float
     required_quantity: int
@@ -174,8 +187,20 @@ class PlateJobResponse(_FromAttributes):
     requirement_id: int
     printer_profile_id: int | None
     queue_item_id: int | None
+    virtual_printer_id: int | None = None
+    printer_profile_name: str | None = None
+    printer_model: str | None = None
+    virtual_printer_name: str | None = None
+    queue_status: str | None = None
     planned_quantity: int
     status: str
+    slice_status: str
+    slice_attempts: int
+    slice_error: str | None
+    slice_result: dict | None
+    source_plate_index: int = 0
+    product_set_index: int = 0
+    sliced_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -224,11 +249,48 @@ class PlateJobPreviewItem(BaseModel):
     planned_quantity: int = Field(gt=0)
     component_name: str
     print_plan_name: str
+    strategy: str = "fixed_plate"
+    source_plate_count: int = 1
 
 
 class PlateJobPreviewResponse(BaseModel):
     order_id: int
     items: list[PlateJobPreviewItem]
+
+
+class RealSliceRequest(BaseModel):
+    """Optional printer identity override for an embedded-settings slice."""
+
+    target_printer_preset: str | None = Field(default=None, min_length=1, max_length=255)
+    target_printer_model: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class SliceArtifactResponse(BaseModel):
+    id: int
+    source_product_file_id: int
+    source_library_file_id: int
+    output_library_file_id: int
+    output_file_name: str | None = None
+    source_sha256: str
+    source_version: int
+    strategy: str
+    target_printer_preset: str | None
+    target_printer_model: str | None
+    settings_fingerprint: str
+    arranged_by_slicer: bool
+    print_time_seconds: int | None
+    filament_used_g: float | None
+    filament_used_mm: float | None
+    output_sha256: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProductOrderSummaryResponse(BaseModel):
+    product_id: int
+    total_quantity: int
+    completed_quantity: int
+    pending_quantity: int
 
 
 class PlateJobConfirmRequest(BaseModel):

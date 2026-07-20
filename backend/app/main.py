@@ -109,6 +109,7 @@ from backend.app.services.printer_manager import (
     printer_manager,
     printer_state_to_dict,
 )
+from backend.app.services.production_allocator import production_allocator
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.services.spool_assignment_notifications import (
     notify_missing_spool_assignments_on_print_start,
@@ -6193,6 +6194,11 @@ async def lifespan(app: FastAPI):
     # Start the print scheduler
     spawn_background_task(print_scheduler.run(), name="print-scheduler")
 
+    # Stage 9: recover and allocate production drafts into held queue rows.
+    # The allocator never communicates with printers; scheduler/API guards keep
+    # these rows from dispatching before the later real-printer stage.
+    spawn_background_task(production_allocator.run(), name="production-allocator")
+
     # Start the smart plug scheduler for time-based on/off
     smart_plug_manager.start_scheduler()
 
@@ -6258,6 +6264,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print_scheduler.stop()
+    production_allocator.stop()
     smart_plug_manager.stop_scheduler()
     notification_service.stop_digest_scheduler()
     github_backup_service.stop_scheduler()

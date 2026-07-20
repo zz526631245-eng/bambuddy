@@ -102,6 +102,8 @@ class PrintQueueItemUpdate(BaseModel):
 
 class PrintQueueItemResponse(BaseModel):
     id: int
+    source_type: Literal["queue", "production"] = "queue"
+    production_plate_job_id: int | None = None
     printer_id: int | None  # None = unassigned
     target_model: str | None = None  # Target printer model for model-based assignment
     target_location: str | None = None  # Target location filter for model-based assignment

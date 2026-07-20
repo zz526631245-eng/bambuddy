@@ -313,6 +313,7 @@ class SlicerApiService:
         model_filename: str,
         plate: int | None = None,
         export_3mf: bool = False,
+        arrange: bool = False,
         request_id: str | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> SliceResult:
@@ -340,6 +341,11 @@ class SlicerApiService:
             data["plate"] = str(plate)
         if export_3mf:
             data["exportType"] = "3mf"
+        if arrange:
+            # Keep all embedded project/process/filament settings intact and
+            # ask the slicer itself to reposition the existing objects on the
+            # target bed.  No local geometry rewrite is performed here.
+            data["arrange"] = "true"
         if request_id is not None:
             data["requestId"] = request_id
 

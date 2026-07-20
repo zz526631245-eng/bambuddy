@@ -180,6 +180,7 @@ async def ensure_production_schema(conn):
         operation_log,
         printer_profile,
         product,
+        product_file,
         product_master,
         production,
         production_recipe,
@@ -223,6 +224,101 @@ async def ensure_stage8_columns(conn):
     await _safe_execute(conn, "ALTER TABLE production_requirements ADD COLUMN recipe_snapshot JSON")
 
 
+async def ensure_stage9_columns(conn):
+    """Add Stage 9 invalidation state without changing Stage 7/8 semantics."""
+    await _safe_execute(
+        conn,
+        "ALTER TABLE production_orders ADD COLUMN recalculation_required BOOLEAN DEFAULT 0 NOT NULL",
+    )
+    await _safe_execute(conn, "ALTER TABLE production_orders ADD COLUMN product_file_snapshot JSON")
+    await _safe_execute(conn, "ALTER TABLE products ADD COLUMN size_class VARCHAR(20) DEFAULT 'standard' NOT NULL")
+    await _safe_execute(conn, "UPDATE products SET size_class = 'standard' WHERE size_class IS NULL OR size_class = ''")
+    await _safe_execute(conn, "ALTER TABLE products ADD COLUMN production_mode VARCHAR(20) DEFAULT 'single_plate' NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE products ADD COLUMN source_plate_count INTEGER DEFAULT 1 NOT NULL")
+    await _safe_execute(conn, "UPDATE products SET production_mode = 'single_plate' WHERE production_mode IS NULL OR production_mode = ''")
+    await _safe_execute(conn, "UPDATE products SET source_plate_count = 1 WHERE source_plate_count IS NULL OR source_plate_count < 1")
+    await _safe_execute(conn, "ALTER TABLE production_requirements ADD COLUMN product_file_id INTEGER REFERENCES product_files(id) ON DELETE RESTRICT")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN virtual_printer_id INTEGER REFERENCES virtual_printers(id) ON DELETE SET NULL")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN slice_status VARCHAR(20) DEFAULT 'pending' NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN slice_attempts INTEGER DEFAULT 0 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN slice_error TEXT")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN slice_result JSON")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN sliced_at DATETIME")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN source_plate_index INTEGER DEFAULT 0 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN product_set_index INTEGER DEFAULT 0 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN build_width_mm FLOAT DEFAULT 256 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN build_depth_mm FLOAT DEFAULT 256 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN build_height_mm FLOAT DEFAULT 256 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN units_per_plate_capacity INTEGER DEFAULT 1 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE product_files ADD COLUMN filament_requirements JSON")
+    await _safe_execute(conn, "ALTER TABLE product_files ADD COLUMN product_color VARCHAR(100)")
+    await _safe_execute(conn, "ALTER TABLE product_files ADD COLUMN source_plate_count INTEGER DEFAULT 1 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE product_files ADD COLUMN source_set_id VARCHAR(64)")
+    await _safe_execute(conn, "ALTER TABLE product_files ADD COLUMN source_plate_index INTEGER DEFAULT 0 NOT NULL")
+    # Preserve files uploaded under the former file-level multi-plate flag.
+    await _safe_execute(conn, "UPDATE products SET production_mode = 'multi_plate' WHERE id IN (SELECT product_id FROM product_files WHERE strategy = 'multi_plate_fixed')")
+    await _safe_execute(conn, "UPDATE products SET source_plate_count = (SELECT MAX(source_plate_count) FROM product_files pf WHERE pf.product_id = products.id) WHERE production_mode = 'multi_plate' AND id IN (SELECT product_id FROM product_files WHERE strategy = 'multi_plate_fixed')")
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN supported_materials JSON")
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN supported_colors JSON")
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN loaded_filaments JSON")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN supported_materials JSON")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN supported_colors JSON")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN loaded_filaments JSON")
+    # Backfill the JSON capability columns so response models expose stable
+    # arrays on databases upgraded from the original Stage 9 schema.
+    await _safe_execute(conn, "UPDATE product_files SET filament_requirements = '[]' WHERE filament_requirements IS NULL")
+    await _safe_execute(conn, "UPDATE printer_profiles SET supported_materials = '[]' WHERE supported_materials IS NULL")
+    await _safe_execute(conn, "UPDATE printer_profiles SET supported_colors = '[]' WHERE supported_colors IS NULL")
+    await _safe_execute(conn, "UPDATE printers SET loaded_filaments = '[]' WHERE loaded_filaments IS NULL")
+    await _safe_execute(conn, "UPDATE virtual_printers SET supported_materials = '[]' WHERE supported_materials IS NULL")
+    await _safe_execute(conn, "UPDATE virtual_printers SET supported_colors = '[]' WHERE supported_colors IS NULL")
+    await _safe_execute(conn, "UPDATE virtual_printers SET loaded_filaments = '[]' WHERE loaded_filaments IS NULL")
+
+
+async def ensure_stage10_slice_artifacts(conn):
+    """Create the reusable real-slice artifact catalog idempotently."""
+    id_type = "SERIAL" if conn.dialect.name == "postgresql" else "INTEGER"
+    timestamp_type = "TIMESTAMP" if conn.dialect.name == "postgresql" else "DATETIME"
+    await _safe_execute(
+        conn,
+        f"""CREATE TABLE IF NOT EXISTS slice_artifacts (
+            id {id_type} PRIMARY KEY,
+            source_product_file_id INTEGER NOT NULL REFERENCES product_files(id) ON DELETE RESTRICT,
+            source_library_file_id INTEGER NOT NULL REFERENCES library_files(id) ON DELETE RESTRICT,
+            output_library_file_id INTEGER NOT NULL UNIQUE REFERENCES library_files(id) ON DELETE RESTRICT,
+            source_sha256 VARCHAR(64) NOT NULL,
+            source_version INTEGER NOT NULL,
+            strategy VARCHAR(30) NOT NULL,
+            target_printer_preset VARCHAR(255),
+            target_printer_model VARCHAR(100),
+            settings_fingerprint VARCHAR(64) NOT NULL UNIQUE,
+            arranged_by_slicer BOOLEAN NOT NULL DEFAULT 0,
+            print_time_seconds INTEGER,
+            filament_used_g FLOAT,
+            filament_used_mm FLOAT,
+            output_sha256 VARCHAR(64) NOT NULL,
+            metadata_json TEXT,
+            created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP,
+            updated_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP
+        )""",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_slice_artifacts_source_product_file_id "
+        "ON slice_artifacts (source_product_file_id)",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_slice_artifacts_source_library_file_id "
+        "ON slice_artifacts (source_library_file_id)",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_slice_artifacts_output_library_file_id "
+        "ON slice_artifacts (output_library_file_id)",
+    )
+
+
 async def init_db():
     # Import models to register them with SQLAlchemy
     from backend.app.models import (  # noqa: F401
@@ -260,6 +356,7 @@ async def init_db():
         printer_profile,
         printer_sensor_history,
         product,
+        product_file,
         product_master,
         production,
         production_recipe,
@@ -267,6 +364,7 @@ async def init_db():
         project_bom,
         settings,
         shopping_list,
+        slice_artifact,
         slicer_pipeline,
         slot_preset,
         smart_plug,
@@ -742,6 +840,8 @@ async def run_migrations(conn):
     # created by ensure_production_schema; these ALTERs upgrade Stage 6 databases.
     await ensure_stage7_columns(conn)
     await ensure_stage8_columns(conn)
+    await ensure_stage9_columns(conn)
+    await ensure_stage10_slice_artifacts(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

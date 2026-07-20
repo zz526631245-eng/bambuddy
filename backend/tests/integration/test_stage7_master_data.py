@@ -19,6 +19,39 @@ async def test_product_crud_sku_normalization_and_unique(async_client: AsyncClie
     assert duplicate.status_code == 409
 
 
+async def test_product_code_is_generated_when_omitted(async_client: AsyncClient):
+    created = await async_client.post("/api/v1/products", json={"name": "自动编码产品"})
+    assert created.status_code == 201
+    assert created.json()["sku"].startswith("PRD-")
+
+
+async def test_product_list_is_sorted_by_upload_time_newest_first(async_client: AsyncClient):
+    first = await async_client.post("/api/v1/products", json={"sku": "SORT-TIME-1", "name": "先上传"})
+    second = await async_client.post("/api/v1/products", json={"sku": "SORT-TIME-2", "name": "后上传"})
+    assert first.status_code == 201 and second.status_code == 201
+    rows = (await async_client.get("/api/v1/products")).json()
+    ids = [row["id"] for row in rows]
+    assert ids.index(second.json()["id"]) < ids.index(first.json()["id"])
+
+
+async def test_create_product_with_image_generates_code_and_returns_image(async_client: AsyncClient, tmp_path, monkeypatch):
+    from backend.app.api.routes import products as products_route
+
+    monkeypatch.setattr(products_route.settings, "base_dir", tmp_path)
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    created = await async_client.post(
+        "/api/v1/products/with-image",
+        data={"name": "带图产品", "description": "测试"},
+        files={"file": ("product.png", png, "image/png")},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["sku"].startswith("PRD-")
+    assert len(body["images"]) == 1
+
+
 async def test_bom_requires_positive_quantity_and_protects_component(async_client: AsyncClient):
     product = (await async_client.post("/api/v1/products", json={"sku": "BOM-7", "name": "BOM Product"})).json()
     component = (

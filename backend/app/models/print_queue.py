@@ -145,11 +145,18 @@ class PrintQueueItem(Base):
     project: Mapped["Project | None"] = relationship(back_populates="queue_items")
     batch: Mapped["PrintBatch | None"] = relationship(back_populates="queue_items")
     created_by: Mapped["User | None"] = relationship()
+    production_plate_job: Mapped["PlateJob | None"] = relationship(
+        back_populates="queue_item",
+        foreign_keys="PlateJob.queue_item_id",
+        uselist=False,
+        lazy="selectin",
+    )
 
 
 from backend.app.models.archive import PrintArchive  # noqa: E402
 from backend.app.models.library import LibraryFile  # noqa: E402
 from backend.app.models.print_batch import PrintBatch  # noqa: E402
 from backend.app.models.printer import Printer  # noqa: E402
+from backend.app.models.production import PlateJob  # noqa: E402
 from backend.app.models.project import Project  # noqa: E402
 from backend.app.models.user import User  # noqa: E402

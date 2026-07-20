@@ -90,6 +90,34 @@ class TestSliceWithProfiles:
         # all four parts hit the wire.
         assert captured["body_len"] > 0
 
+
+class TestSliceWithoutProfiles:
+    @pytest.mark.asyncio
+    async def test_embedded_settings_path_can_request_arrangement_without_profile_override(self):
+        captured: dict[str, bytes] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = request.content
+            return httpx.Response(
+                status_code=200,
+                content=b"sliced-3mf",
+                headers={"x-print-time-seconds": "12", "x-filament-used-g": "1.5"},
+            )
+
+        service = SlicerApiService("http://sidecar:3000", client=_mock_client(handler))
+        result = await service.slice_without_profiles(
+            model_bytes=b"source-3mf",
+            model_filename="source.3mf",
+            plate=0,
+            export_3mf=True,
+            arrange=True,
+        )
+
+        assert result.content == b"sliced-3mf"
+        assert b'name="plate"\r\n\r\n0' in captured["body"]
+        assert b'name="exportType"\r\n\r\n3mf' in captured["body"]
+        assert b'name="arrange"\r\n\r\ntrue' in captured["body"]
+
     @pytest.mark.asyncio
     async def test_4xx_raises_slicer_input_error(self):
         def handler(request: httpx.Request) -> httpx.Response:

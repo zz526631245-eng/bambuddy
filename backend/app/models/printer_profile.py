@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, Integer, String, func
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Float, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.database import Base
@@ -28,6 +28,10 @@ class PrinterProfile(Base):
     profile_group: Mapped[str | None] = mapped_column(String(100))
     auto_production_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Static capabilities shared by real and virtual printers using this
+    # profile.  Current loaded material belongs to the printer row itself.
+    supported_materials: Mapped[list] = mapped_column(JSON, default=list)
+    supported_colors: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

@@ -21,6 +21,7 @@ from backend.app.models.library import LibraryFile
 from backend.app.models.print_batch import PrintBatch
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
+from backend.app.models.production import PlateJob
 from backend.app.models.project import Project
 from backend.app.models.user import User
 from backend.app.schemas.print_queue import (
@@ -46,6 +47,25 @@ from backend.app.utils.threemf_tools import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/queue", tags=["queue"])
+
+
+async def _production_plate_job_id(db: AsyncSession, queue_item_id: int) -> int | None:
+    return (
+        await db.execute(select(PlateJob.id).where(PlateJob.queue_item_id == queue_item_id))
+    ).scalar_one_or_none()
+
+
+async def _reject_production_queue_mutation(db: AsyncSession, queue_item_id: int) -> None:
+    plate_job_id = await _production_plate_job_id(db, queue_item_id)
+    if plate_job_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "production_queue_managed_by_order",
+                "message": "生产队列项由生产订单统一管理",
+                "plate_job_id": plate_job_id,
+            },
+        )
 
 
 def _extract_filament_types_from_3mf(file_path: Path, plate_id: int | None = None) -> list[str]:
@@ -162,6 +182,8 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
     # Create response with parsed ams_mapping
     item_dict = {
         "id": item.id,
+        "source_type": "production" if item.production_plate_job else "queue",
+        "production_plate_job_id": item.production_plate_job.id if item.production_plate_job else None,
         "printer_id": item.printer_id,
         "target_model": item.target_model,
         "target_location": item.target_location,
@@ -1047,6 +1069,8 @@ async def update_queue_item(
         if item.created_by_id != user.id:
             raise HTTPException(403, "You can only update your own queue items")
 
+    await _reject_production_queue_mutation(db, item.id)
+
     if item.status != "pending":
         raise HTTPException(400, "Can only update pending items")
 
@@ -1130,6 +1154,8 @@ async def delete_queue_item(
     if not can_modify_all:
         if item.created_by_id != user.id:
             raise HTTPException(403, "You can only delete your own queue items")
+
+    await _reject_production_queue_mutation(db, item.id)
 
     if item.status == "printing":
         raise HTTPException(400, "Cannot delete item that is currently printing")
@@ -1240,6 +1266,8 @@ async def cancel_queue_item(
     if not can_modify_all:
         if item.created_by_id != user.id:
             raise HTTPException(403, "You can only cancel your own queue items")
+
+    await _reject_production_queue_mutation(db, item.id)
 
     if item.status not in ("pending",):
         raise HTTPException(400, f"Cannot cancel item with status '{item.status}'")
@@ -1392,6 +1420,17 @@ async def start_queue_item(
 
     if item.status != "pending":
         raise HTTPException(400, f"Can only start pending items, current status: '{item.status}'")
+
+    production_job_id = await _production_plate_job_id(db, item.id)
+    if production_job_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "production_dispatch_blocked",
+                "message": "阶段9生产任务只允许软件模拟，不能发送打印",
+                "plate_job_id": production_job_id,
+            },
+        )
 
     # Live deficit check — re-evaluated against current spool state, so a
     # spool swap between scheduler flagging and the user clicking ▶ clears

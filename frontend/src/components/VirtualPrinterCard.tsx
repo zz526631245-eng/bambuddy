@@ -57,6 +57,10 @@ export function VirtualPrinterCard({ printer, models }: VirtualPrinterCardProps)
   const [localQueueForceColorMatch, setLocalQueueForceColorMatch] = useState(printer.queue_force_color_match ?? false);
   const [localGcodeInjection, setLocalGcodeInjection] = useState(printer.gcode_injection ?? false);
   const [localTailscaleDisabled, setLocalTailscaleDisabled] = useState(printer.tailscale_disabled ?? true);
+  const [localSupportedMaterials, setLocalSupportedMaterials] = useState((printer.supported_materials || []).join(', '));
+  const [localSupportedColors, setLocalSupportedColors] = useState((printer.supported_colors || []).join(', '));
+  const [localLoadedMaterial, setLocalLoadedMaterial] = useState(printer.loaded_filaments?.[0]?.material || '');
+  const [localLoadedColor, setLocalLoadedColor] = useState(printer.loaded_filaments?.[0]?.color || '');
   const [showAccessCode, setShowAccessCode] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -103,6 +107,10 @@ export function VirtualPrinterCard({ printer, models }: VirtualPrinterCardProps)
       setLocalQueueForceColorMatch(printer.queue_force_color_match ?? false);
       setLocalGcodeInjection(printer.gcode_injection ?? false);
       setLocalTailscaleDisabled(printer.tailscale_disabled ?? true);
+      setLocalSupportedMaterials((printer.supported_materials || []).join(', '));
+      setLocalSupportedColors((printer.supported_colors || []).join(', '));
+      setLocalLoadedMaterial(printer.loaded_filaments?.[0]?.material || '');
+      setLocalLoadedColor(printer.loaded_filaments?.[0]?.color || '');
     }
   }, [printer, pendingAction]);
 
@@ -205,6 +213,17 @@ export function VirtualPrinterCard({ printer, models }: VirtualPrinterCardProps)
     setLocalModel(model);
     setPendingAction('model');
     updateMutation.mutate({ model });
+  };
+
+  const handleMaterialCapabilitySave = () => {
+    setPendingAction('materialCapability');
+    updateMutation.mutate({
+      supported_materials: localSupportedMaterials.split(',').map(value => value.trim().toUpperCase()).filter(Boolean),
+      supported_colors: localSupportedColors.split(',').map(value => value.trim().toUpperCase()).filter(Boolean),
+      loaded_filaments: localLoadedMaterial.trim() && localLoadedColor.trim()
+        ? [{ slot: 0, material: localLoadedMaterial.trim().toUpperCase(), color: localLoadedColor.trim().toUpperCase() }]
+        : [],
+    });
   };
 
   const handleTargetPrinterChange = (printerId: number) => {
@@ -515,6 +534,23 @@ export function VirtualPrinterCard({ printer, models }: VirtualPrinterCardProps)
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
                 </div>
+              </div>
+            )}
+
+            {/* Production material/colour capability (shared with real-printer adapters). */}
+            {localMode !== 'proxy' && (
+              <div className="pt-2 border-t border-bambu-dark-tertiary space-y-2">
+                <div className="text-white text-sm font-medium">生产材料与颜色能力</div>
+                <p className="text-xs text-bambu-gray">用于自动分配；当前加载材料/颜色代表本次测试可用的耗材。</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input aria-label="支持的材料" value={localSupportedMaterials} onChange={e => setLocalSupportedMaterials(e.target.value)} placeholder="支持材料：PLA, PETG" className="bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-2 py-1.5 text-white text-xs" />
+                  <input aria-label="支持的颜色" value={localSupportedColors} onChange={e => setLocalSupportedColors(e.target.value)} placeholder="支持颜色：#FFFFFF" className="bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-2 py-1.5 text-white text-xs" />
+                  <input aria-label="当前加载材料" value={localLoadedMaterial} onChange={e => setLocalLoadedMaterial(e.target.value)} placeholder="当前材料：PLA" className="bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-2 py-1.5 text-white text-xs" />
+                  <input aria-label="当前加载颜色" value={localLoadedColor} onChange={e => setLocalLoadedColor(e.target.value)} placeholder="当前颜色：#FFFFFF" className="bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-md px-2 py-1.5 text-white text-xs" />
+                </div>
+                <Button onClick={handleMaterialCapabilitySave} disabled={pendingAction === 'materialCapability'} variant="secondary">
+                  {pendingAction === 'materialCapability' ? <Loader2 className="w-4 h-4 animate-spin" /> : '保存材料/颜色能力'}
+                </Button>
               </div>
             )}
 

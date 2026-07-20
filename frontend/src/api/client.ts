@@ -2061,6 +2061,8 @@ export interface DiscoveredTasmotaDevice {
 // Print Queue types
 export interface PrintQueueItem {
   id: number;
+  source_type?: 'queue' | 'production';
+  production_plate_job_id?: number | null;
   printer_id: number | null;  // null = unassigned
   target_model: string | null;  // Target printer model for model-based assignment
   target_location: string | null;  // Target location filter for model-based assignment
@@ -7086,6 +7088,13 @@ export interface VirtualPrinterConfig {
   bind_ip: string | null;
   remote_interface_ip: string | null;
   position: number;
+  build_width_mm: number;
+  build_depth_mm: number;
+  build_height_mm: number;
+  units_per_plate_capacity: number;
+  supported_materials: string[];
+  supported_colors: string[];
+  loaded_filaments: Array<{slot:number; material:string; color:string}>;
   status: { running: boolean; pending_files: number; proxy?: VirtualPrinterProxyStatus };
 }
 
@@ -7111,6 +7120,13 @@ export const multiVirtualPrinterApi = {
     gcode_injection?: boolean;
     bind_ip?: string;
     remote_interface_ip?: string;
+    build_width_mm?: number;
+    build_depth_mm?: number;
+    build_height_mm?: number;
+    units_per_plate_capacity?: number;
+    supported_materials?: string[];
+    supported_colors?: string[];
+    loaded_filaments?: Array<{slot:number; material:string; color:string}>;
   }) =>
     request<VirtualPrinterConfig>('/virtual-printers', {
       method: 'POST',
@@ -7130,6 +7146,13 @@ export const multiVirtualPrinterApi = {
     tailscale_disabled?: boolean;
     bind_ip?: string;
     remote_interface_ip?: string;
+    build_width_mm?: number;
+    build_depth_mm?: number;
+    build_height_mm?: number;
+    units_per_plate_capacity?: number;
+    supported_materials?: string[];
+    supported_colors?: string[];
+    loaded_filaments?: Array<{slot:number; material:string; color:string}>;
   }) =>
     request<VirtualPrinterConfig>(`/virtual-printers/${id}`, {
       method: 'PUT',

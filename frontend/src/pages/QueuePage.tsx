@@ -572,6 +572,11 @@ function SortableQueueItem({
                 {t('queue.badges.staged')}
               </span>
             )}
+            {item.source_type === 'production' && (
+              <span className="text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded-full border border-amber-200 dark:border-amber-500/20">
+                Stage 9 · Simulation
+              </span>
+            )}
             {item.require_previous_success && (
               <span className="text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 rounded-full border border-orange-200 dark:border-orange-500/20">
                 {t('queue.badges.requiresPrevious')}
@@ -681,7 +686,7 @@ function SortableQueueItem({
                 <StopCircle className="w-4 h-4" />
               </Button>
             )}
-            {isPending && (
+            {isPending && item.source_type !== 'production' && (
               <>
                 {item.manual_start && (
                   <Button

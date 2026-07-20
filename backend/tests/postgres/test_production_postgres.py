@@ -10,18 +10,23 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import MetaData, inspect, select, text
+from sqlalchemy import MetaData, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import backend.app.models  # noqa: F401
 from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns, ensure_stage8_columns
+from backend.app.models.library import LibraryFile
 from backend.app.models.operation_log import OperationLog
+from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.printer import Printer
+from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product import Product
 from backend.app.models.product_master import ProductComponent, ProductionBOMItem
 from backend.app.models.production import PRODUCTION_TABLE_NAMES, PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.services import production_order_service
+from backend.app.services.production_allocator import allocate_plate_jobs
 from backend.app.services.production_order_service import create_order
 
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
@@ -324,3 +329,107 @@ async def test_postgres_concurrent_plate_job_confirmation_never_overallocates(
     assert requirement is not None
     assert total_planned <= requirement.required_quantity
     assert requirement.reserved_quantity == total_planned
+
+
+async def test_postgres_concurrent_stage9_allocators_create_one_queue_item(postgres_engine):
+    async with postgres_engine.begin() as conn:
+        await ensure_production_schema(conn)
+    sessions = async_sessionmaker(postgres_engine, expire_on_commit=False)
+
+    async with sessions() as session:
+        product = Product(sku="PG-ALLOC", name="PG Allocator")
+        component = ProductComponent(code="PG-ALLOC-PART", name="PG Allocator Part", unit="pcs")
+        library_file = LibraryFile(
+            filename="pg-stage9.3mf",
+            file_path="library/pg-stage9.3mf",
+            file_type="3mf",
+            file_size=64,
+        )
+        profile = PrinterProfile(
+            code="PG-AUTO-X1C",
+            name="PG Auto X1C",
+            printer_model="X1C",
+            nozzle_diameter=0.4,
+            location="PG-LAB",
+            auto_production_enabled=True,
+        )
+        printer = Printer(
+            name="PG simulated X1C",
+            serial_number="PGSTAGE9000001",
+            ip_address="192.0.2.90",
+            access_code="00000000",
+            model="X1C",
+            location="PG-LAB",
+            is_active=True,
+        )
+        session.add_all([product, component, library_file, profile, printer])
+        await session.flush()
+        session.add(ProductionBOMItem(product_id=product.id, component_id=component.id, quantity=1))
+        session.add(
+            ProductionRecipe(
+                code="PG-ALLOC-PLAN",
+                name="PG Allocator Plan",
+                product_id=product.id,
+                component_id=component.id,
+                printer_profile_id=profile.id,
+                library_file_id=library_file.id,
+                version=1,
+            )
+        )
+        await session.commit()
+        product_id = product.id
+        profile_id = profile.id
+
+    async with sessions() as session:
+        order, _ = await create_order(
+            session,
+            operation_id="pg-stage9-create",
+            order_number="PG-STAGE9-ORDER",
+            product_id=product_id,
+            quantity=1,
+            priority=0,
+            due_at=None,
+            notes=None,
+            actor_user_id=None,
+        )
+        requirement_id = order.requirements[0].id
+        jobs, _ = await production_order_service.confirm_plate_jobs(
+            session,
+            order_id=order.id,
+            operation_id="pg-stage9-confirm",
+            items=[
+                type(
+                    "PreviewItem",
+                    (),
+                    {
+                        "requirement_id": requirement_id,
+                        "printer_profile_id": profile_id,
+                        "planned_quantity": 1,
+                    },
+                )()
+            ],
+            actor_user_id=None,
+        )
+        job_id = jobs[0].id
+
+    start = asyncio.Event()
+    ready = 0
+
+    async def allocate_once():
+        nonlocal ready
+        ready += 1
+        if ready == 2:
+            start.set()
+        await asyncio.wait_for(start.wait(), timeout=5)
+        async with sessions() as session:
+            return await allocate_plate_jobs(session, plate_job_ids=[job_id])
+
+    await asyncio.gather(allocate_once(), allocate_once())
+
+    async with sessions() as session:
+        job = await session.get(PlateJob, job_id)
+        queue_count = (await session.execute(select(func.count(PrintQueueItem.id)))).scalar_one()
+    assert job is not None
+    assert job.status == "assigned"
+    assert job.queue_item_id is not None
+    assert queue_count == 1
