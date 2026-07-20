@@ -35,6 +35,8 @@ npm-debug.log*
 
 # Archive files (user data)
 archive/
+/product_images/
+/result.json
 
 # Firmware cache (downloaded firmware files)
 firmware/
