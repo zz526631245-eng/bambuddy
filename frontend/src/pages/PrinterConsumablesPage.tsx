@@ -21,6 +21,9 @@ function parseScanValue(rawValue: string): ParsedScan {
     if (nested) {
       return { ...parseScanValue(nested), ...(targetKey ? { targetKey } : {}) };
     }
+    if (targetKey) {
+      return { scanCode: '', targetKey };
+    }
     if (parsed.protocol === 'bambuddy:') {
       return {
         scanCode: parsed.searchParams.get('code') || value,
@@ -91,6 +94,15 @@ export function PrinterConsumablesPage() {
     if (parsed.material) setMaterial(parsed.material);
     if (parsed.colorHex) setColorHex(parsed.colorHex.startsWith('#') ? parsed.colorHex : '#' + parsed.colorHex);
     if (parsed.colorName) setColorName(parsed.colorName);
+    if (parsed.targetKey && !parsed.scanCode) {
+      setScanCode('');
+      setPendingScan(false);
+      setPendingUnitId(null);
+      setPendingUnitScan(false);
+      setCameraOpen(false);
+      setMessage('打印机二维码识别成功，已自动选择对应打印机。');
+      return;
+    }
     setScanCode(parsed.scanCode);
     const matchedUnit = units.data?.find(unit => unit.unit_code === parsed.scanCode);
     setPendingUnitScan(Boolean(matchedUnit || parsed.scanCode.startsWith('CU-')));
@@ -116,6 +128,13 @@ export function PrinterConsumablesPage() {
     setPendingScan(true);
     setMessage('二维码识别成功，耗材信息已填入，请点击“确认登记”。');
   }, [applyScannedPayload, colorHex, targetKey, targets.data, units.data]);
+  React.useEffect(() => {
+    const printerKey = searchParams.get('printer');
+    if (!printerKey) return;
+    setTargetKey(printerKey);
+    setPendingScan(false);
+    setMessage('打印机二维码识别成功，已自动选择对应打印机。');
+  }, [searchParams]);
   React.useEffect(() => {
     if (deepLinkApplied.current) return;
     const encoded = new URLSearchParams(window.location.search).get('scan');
