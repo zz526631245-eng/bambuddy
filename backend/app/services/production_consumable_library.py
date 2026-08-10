@@ -49,7 +49,10 @@ async def _serialize(unit: ProductionConsumableUnit, db: AsyncSession, *, replay
 
 
 async def list_units(db: AsyncSession, *, status: str | None = None) -> list[dict]:
-    query = select(ProductionConsumableUnit).order_by(ProductionConsumableUnit.id.desc())
+    query = select(ProductionConsumableUnit).order_by(
+        ProductionConsumableUnit.generated_at.desc(),
+        ProductionConsumableUnit.id.desc(),
+    )
     if status:
         query = query.where(ProductionConsumableUnit.status == status)
     rows = list((await db.execute(query)).scalars().all())
@@ -200,3 +203,37 @@ async def summary(db: AsyncSession) -> dict:
         "scrapped": counts[CONSUMABLE_SCRAPPED],
         "total": len(rows),
     }
+
+
+async def summary_by_material_type(db: AsyncSession) -> dict[int, dict]:
+    """Return inventory counts and QR units grouped by material type.
+
+    The backend owns these counts so material-management screens never
+    recalculate inventory quantities in the browser.
+    """
+
+    units = await list_units(db)
+    result: dict[int, dict] = {}
+    for unit in units:
+        material_type_id = unit["material_type_id"]
+        stats = result.setdefault(
+            material_type_id,
+            {
+                "generated": 0,
+                "in_stock": 0,
+                "bound": 0,
+                "depleted": 0,
+                "scrapped": 0,
+                "received": 0,
+                "total": 0,
+                "units": [],
+            },
+        )
+        status = unit["status"]
+        if status in stats:
+            stats[status] += 1
+        stats["total"] += 1
+        if status in (CONSUMABLE_IN_STOCK, CONSUMABLE_BOUND):
+            stats["received"] += 1
+        stats["units"].append(unit)
+    return result

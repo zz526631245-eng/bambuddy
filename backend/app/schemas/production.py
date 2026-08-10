@@ -1,7 +1,7 @@
 """Stage 6 create/read schemas for production-domain skeleton APIs."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -57,6 +57,7 @@ class MaterialTypeResponse(_FromAttributes):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    consumable_stats: dict[str, Any] = Field(default_factory=dict)
 
 
 class PrinterConsumableScan(BaseModel):

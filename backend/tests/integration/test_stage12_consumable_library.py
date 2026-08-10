@@ -64,6 +64,14 @@ async def test_generate_unique_units_and_receive_is_idempotent(
     assert summary.json()["generated"] == 2
     assert summary.json()["in_stock"] == 1
 
+    materials = await async_client.get("/api/v1/production/material-types")
+    assert materials.status_code == 200, materials.text
+    material_stats = next(item["consumable_stats"] for item in materials.json() if item["id"] == material["id"])
+    assert material_stats["generated"] == 2
+    assert material_stats["in_stock"] == 1
+    assert material_stats["received"] == 1
+    assert [unit["unit_code"] for unit in material_stats["units"]] == [units[2]["unit_code"], units[1]["unit_code"], units[0]["unit_code"]]
+
 
 async def test_bound_unit_depletion_releases_direct_printer_binding(
     async_client: AsyncClient,

@@ -62,7 +62,13 @@ from backend.app.schemas.production import (
     SliceArtifactResponse,
 )
 from backend.app.services.production_allocator import allocate_plate_jobs
-from backend.app.services.production_consumable_library import create_batch, list_units, scan_unit, summary
+from backend.app.services.production_consumable_library import (
+    create_batch,
+    list_units,
+    scan_unit,
+    summary,
+    summary_by_material_type,
+)
 from backend.app.services.production_consumable_service import list_bindings, scan_direct_consumable
 from backend.app.services.production_order_service import (
     ProductionOrderError,
@@ -198,7 +204,9 @@ async def list_material_types(
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.MATERIAL_TYPES_READ),
 ):
-    return list((await db.execute(select(MaterialType).order_by(MaterialType.id))).scalars().all())
+    rows = list((await db.execute(select(MaterialType).order_by(MaterialType.id))).scalars().all())
+    stats = await summary_by_material_type(db)
+    return [{**row.__dict__, "consumable_stats": stats.get(row.id, {})} for row in rows]
 
 
 @router.post("/material-types", response_model=MaterialTypeResponse, status_code=status.HTTP_201_CREATED)
