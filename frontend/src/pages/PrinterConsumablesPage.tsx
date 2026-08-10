@@ -41,12 +41,16 @@ export function PrinterConsumablesPage() {
   const queryClient = useQueryClient();
   const targets = useQuery({ queryKey: ['printer-consumable-targets'], queryFn: productionApi.listConsumableTargets });
   const bindings = useQuery({ queryKey: ['printer-consumables'], queryFn: productionApi.listConsumables });
+  const units = useQuery({ queryKey: ['consumable-library-for-scan'], queryFn: () => productionApi.listConsumableUnits() });
   const [targetKey, setTargetKey] = React.useState(searchParams.get('printer') || '');
   const [scanCode, setScanCode] = React.useState('');
   const [material, setMaterial] = React.useState('PLA');
   const [colorHex, setColorHex] = React.useState('#FF0000');
   const [colorName, setColorName] = React.useState('');
   const [message, setMessage] = React.useState('');
+  const [pendingScan, setPendingScan] = React.useState(false);
+  const [pendingUnitId, setPendingUnitId] = React.useState<number | null>(null);
+  const [pendingUnitScan, setPendingUnitScan] = React.useState(false);
   const [cameraOpen, setCameraOpen] = React.useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const scannerControlsRef = React.useRef<IScannerControls | null>(null);
@@ -58,9 +62,11 @@ export function PrinterConsumablesPage() {
       queryClient.invalidateQueries({ queryKey: ['printer-consumable-targets'] });
       setMessage(result.replayed ? '重复扫描已安全重放，没有产生重复记录。' : result.replaced_id ? '新耗材已登记，旧耗材已自动替换。' : '耗材已登记并绑定到打印机。');
       setScanCode('');
+      setPendingScan(false);
+      setPendingUnitId(null);
+      setPendingUnitScan(false);
     },
   });
-  const { mutate: registerScan } = scan;
   const selected = targets.data?.find(item => item.kind + ':' + item.id === targetKey);
   const applyScannedPayload = React.useCallback((rawValue: string) => {
     try {
@@ -86,23 +92,30 @@ export function PrinterConsumablesPage() {
     if (parsed.colorHex) setColorHex(parsed.colorHex.startsWith('#') ? parsed.colorHex : '#' + parsed.colorHex);
     if (parsed.colorName) setColorName(parsed.colorName);
     setScanCode(parsed.scanCode);
+    const matchedUnit = units.data?.find(unit => unit.unit_code === parsed.scanCode);
+    setPendingUnitScan(Boolean(matchedUnit || parsed.scanCode.startsWith('CU-')));
+    if (matchedUnit) {
+      setPendingUnitId(matchedUnit.id);
+      setMaterial(matchedUnit.material);
+      setColorHex(matchedUnit.color_hex ? (matchedUnit.color_hex.startsWith('#') ? matchedUnit.color_hex : '#' + matchedUnit.color_hex) : colorHex);
+      setColorName(matchedUnit.color_name || '');
+    } else {
+      setPendingUnitId(null);
+    }
     const targetKeyToUse = parsed.targetKey || targetKey;
     const targetToUse = targets.data?.find(item => item.kind + ':' + item.id === targetKeyToUse);
     if (!targetToUse) {
       applyScannedPayload(parsed.scanCode);
+      setPendingScan(false);
+      setPendingUnitId(null);
+      setPendingUnitScan(false);
       setMessage('请先扫描或选择打印机，再扫描耗材二维码。');
       return;
     }
     setCameraOpen(false);
-    registerScan({
-      operation_id: operationId(),
-      scan_code: parsed.scanCode,
-      material: parsed.material || null,
-      color_hex: parsed.colorHex || null,
-      color_name: parsed.colorName || null,
-      ...(targetToUse.kind === 'printer' ? { printer_id: targetToUse.id } : { virtual_printer_id: targetToUse.id }),
-    });
-  }, [applyScannedPayload, registerScan, targetKey, targets.data]);
+    setPendingScan(true);
+    setMessage('二维码识别成功，耗材信息已填入，请点击“确认登记”。');
+  }, [applyScannedPayload, colorHex, targetKey, targets.data, units.data]);
   React.useEffect(() => {
     if (deepLinkApplied.current) return;
     const encoded = new URLSearchParams(window.location.search).get('scan');
@@ -150,7 +163,7 @@ export function PrinterConsumablesPage() {
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!selected || !scanCode.trim()) return;
-    scan.mutate({ operation_id: operationId(), scan_code: scanCode.trim(), material: material.trim().toUpperCase(), color_hex: colorHex, color_name: colorName.trim() || null, ...(selected.kind === 'printer' ? { printer_id: selected.id } : { virtual_printer_id: selected.id }) });
+    scan.mutate({ operation_id: operationId(), scan_code: scanCode.trim(), material: pendingUnitScan ? null : (material.trim().toUpperCase() || null), color_hex: pendingUnitScan ? null : (colorHex || null), color_name: pendingUnitScan ? null : (colorName.trim() || null), ...(pendingUnitId ? { consumable_unit_id: pendingUnitId } : {}), ...(selected.kind === 'printer' ? { printer_id: selected.id } : { virtual_printer_id: selected.id }) });
   };
   return <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
     <div><h1 className="text-3xl font-bold text-white">直供耗材登记</h1><p className="text-bambu-gray mt-1">扫码新耗材后自动替换该打印机的旧直供耗材；AMS 槽位不会被修改。</p></div>
@@ -162,7 +175,8 @@ export function PrinterConsumablesPage() {
         <label className="text-sm text-bambu-gray">颜色<span className="mt-1 flex gap-2"><input aria-label="颜色值" type="color" value={colorHex} onChange={event => setColorHex(event.target.value)} className="h-10 w-14 bg-bambu-dark" /><input aria-label="颜色名称" value={colorName} onChange={event => setColorName(event.target.value)} placeholder="例如 红色" className="flex-1 bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white" /></span></label>
         <div className="md:col-span-2 flex items-end gap-3"><Button type="button" variant="secondary" onClick={() => setCameraOpen(true)}><Camera size={16} />打开摄像头扫码</Button><Button type="submit" disabled={scan.isPending || !selected}><ScanLine size={16} />确认登记</Button>{message && <span className="text-sm text-bambu-green flex items-center gap-1"><CheckCircle2 size={16} />{message}</span>}{scan.error && <span className="text-sm text-red-400">{String(scan.error)}</span>}</div>
       </form>
-      <p className="text-xs text-bambu-gray mt-3">已锁定打印机后，耗材二维码识别成功会立即登记；手动输入仍可使用“确认登记”。</p>
+      {pendingScan && <div className="mt-3 rounded-lg border border-bambu-green bg-bambu-green/10 px-3 py-2 text-sm text-bambu-green">二维码识别成功，已填入耗材信息；请检查打印机和耗材后点击“确认登记”。</div>}
+      <p className="text-xs text-bambu-gray mt-3">已锁定打印机后，耗材二维码识别成功会填入信息；点击“确认登记”后才写入服务器。</p>
       <p className="text-xs text-bambu-gray mt-3">当前是软件扫码测试入口。真实扫码器后续只需调用同一个接口，不会自动连接打印机。</p>
     </CardContent></Card>
     <Card><CardHeader><h2 className="text-xl font-semibold text-white">当前直供耗材</h2></CardHeader><CardContent>{(bindings.data ?? []).length === 0 ? <p className="text-bambu-gray">还没有登记直供耗材。</p> : <div className="grid md:grid-cols-2 gap-3">{(bindings.data ?? []).map(binding => <div key={binding.id} className="rounded border border-bambu-gray-dark bg-bambu-dark p-3 flex gap-3 items-center"><span className="w-10 h-10 rounded-full border border-white/20" style={{ background: '#' + binding.color_hex.slice(0, 6) }} /><div><p className="text-white font-semibold">{binding.virtual_printer_name || binding.printer_name || '未命名打印机'}</p><p className="text-bambu-gray">{binding.material} · {binding.color_name || binding.color_hex} · 扫描码 {binding.scan_code}</p><p className="text-xs text-bambu-gray">直供耗材 · {new Date(binding.scanned_at).toLocaleString()}</p></div></div>)}</div>}</CardContent></Card>

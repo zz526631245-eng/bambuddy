@@ -24,7 +24,7 @@
 - GET /api/v1/production/printer-consumables
 - POST /api/v1/production/printer-consumables/scan
 
-扫码请求必须提供 operation_id、scan_code、material、color_hex，并且只能选择 printer_id 或 virtual_printer_id 其中一个。
+扫码请求必须提供 operation_id、scan_code，并且只能选择 printer_id 或 virtual_printer_id 其中一个；扫描耗材卷 unit_code 时 material 和 color_hex 由后端从材料主数据补齐。
 
 ## 验证结果
 
@@ -55,9 +55,9 @@
 
 阶段 13 再接真实打印机状态读取适配器和心跳/离线状态；阶段 14 才允许单台真实打印机受控发送。
 
-## 自动登记与扫码兼容补充
+## 扫码确认与兼容补充
 
-- 扫描已入库的耗材卷二维码后，后端按 `unit_code` 自动读取材料类型、颜色和耗材卷身份；只要打印机目标已锁定，扫描成功就立即登记直供绑定，不再要求手动点击确认。
+- 扫描已入库的耗材卷二维码后，页面按 `unit_code` 自动读取并填入材料类型、颜色和耗材卷身份；打印机目标已锁定时关闭扫码窗口并显示“识别成功，待确认登记”，点击“确认登记”后才写入绑定。
 - `operation_id` 仍然幂等，重复识别不会重复创建绑定；旧直供耗材继续自动失效并保留审计记录。
 - 网页扫码改用 `@zxing/browser`，不再只依赖浏览器实验性的 `BarcodeDetector`，覆盖 iOS Safari 和不支持原生识别器的移动浏览器。
 - 二维码地址支持 `VITE_PUBLIC_BASE_URL`；不要在 `127.0.0.1` 页面生成给手机使用的二维码，应从手机可访问的 HTTPS 地址生成。
