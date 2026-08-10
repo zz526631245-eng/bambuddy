@@ -144,7 +144,7 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
         if unit.unit_code != payload.scan_code:
             raise ValueError("扫码编码与耗材卷不一致")
         if unit.status not in (CONSUMABLE_IN_STOCK, CONSUMABLE_BOUND):
-            raise ValueError("该耗材卷当前不能绑定打印机")
+            raise ValueError("该耗材未入库，无法绑定打印机")
 
     if effective_material is None or effective_color_hex is None:
         raise ValueError("material and color are required unless a consumable unit is scanned")

@@ -184,3 +184,4 @@
 - 根因是旧数据库中的 `production_printer_consumables` 表缺少 Stage 12 新增的 `consumable_unit_id` 列；路由异常被外层认证中间件误显示为 `Authentication service temporarily unavailable`。
 - 新增可重复执行的 Stage 12 迁移和索引，启动时自动升级旧数据库；认证探针同时增加 SQLite 短暂锁重试，并继续对持久/非锁错误 fail-closed。
 - 重启后 `GET /api/v1/production/printer-consumables` 返回 200，确认登记接口使用幂等操作回放返回 201；数据库完整性检查为 `ok`。
+- 未入库耗材绑定时的 422 提示已改为“该耗材未入库，无法绑定打印机”，避免把库存状态误解为扫码或认证故障。

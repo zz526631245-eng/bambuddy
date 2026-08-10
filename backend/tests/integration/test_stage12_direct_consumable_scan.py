@@ -12,6 +12,45 @@ from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.services.production_printer_capabilities import capabilities_from_rows, match_filament_requirements
 
 
+async def test_unreceived_consumable_reports_clear_inventory_error(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    material = await async_client.post(
+        "/api/v1/production/material-types",
+        json={
+            "code": "NOT-IN-STOCK-PLA",
+            "material": "PLA",
+            "brand": "3DR",
+            "color_name": "white",
+            "color_hex": "#FFFFFF",
+        },
+    )
+    assert material.status_code == 201, material.text
+    batch = await async_client.post(
+        "/api/v1/production/consumable-library/batches",
+        json={
+            "operation_id": "stage12-not-in-stock-batch",
+            "material_type_id": material.json()["id"],
+            "quantity": 1,
+        },
+    )
+    assert batch.status_code == 201, batch.text
+    unit = batch.json()["items"][0]
+    virtual = await _virtual(db_session, "NOT-IN-STOCK")
+
+    response = await async_client.post(
+        "/api/v1/production/printer-consumables/scan",
+        json={
+            "operation_id": "stage12-not-in-stock-bind",
+            "scan_code": unit["unit_code"],
+            "virtual_printer_id": virtual.id,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "该耗材未入库，无法绑定打印机"
+
+
 async def _virtual(db: AsyncSession, suffix: str = "A") -> VirtualPrinter:
     row = VirtualPrinter(
         name=f"Stage 12 test virtual {suffix}",

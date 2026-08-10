@@ -68,3 +68,4 @@
 - 修复：`ensure_stage12_columns` 以可重复迁移方式添加列和索引；认证探针对 SQLite 短暂锁重试，但持久或非锁异常仍拒绝请求。
 - 验证：重启后列表接口返回 200；使用已有 `operation_id` 回放确认登记返回 201 且 `replayed=true`；`PRAGMA integrity_check` 返回 `ok`。
 - 维护注意：SQLite 生产模式仍要求单个 Bambuddy 进程；不要同时运行其他端口的旧服务共用同一 `bambuddy.db`。
+- 未入库的耗材卷会返回 `该耗材未入库，无法绑定打印机`；先在耗材库执行“扫码入库”，状态变为 `in_stock` 后才能绑定。
