@@ -29,6 +29,11 @@ from backend.app.models.spool import Spool
 from backend.app.models.user import User
 from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import (
+    ConsumableBatchCreate,
+    ConsumableBatchResponse,
+    ConsumableLibraryScan,
+    ConsumableLibrarySummary,
+    ConsumableUnitResponse,
     MaterialTypeCreate,
     MaterialTypeResponse,
     OperationLogResponse,
@@ -57,6 +62,7 @@ from backend.app.schemas.production import (
     SliceArtifactResponse,
 )
 from backend.app.services.production_allocator import allocate_plate_jobs
+from backend.app.services.production_consumable_library import create_batch, list_units, scan_unit, summary
 from backend.app.services.production_consumable_service import list_bindings, scan_direct_consumable
 from backend.app.services.production_order_service import (
     ProductionOrderError,
@@ -80,6 +86,49 @@ from backend.app.services.production_slicer import (
 )
 
 router = APIRouter(prefix="/production", tags=["production"])
+
+
+@router.get("/consumable-library", response_model=list[ConsumableUnitResponse])
+async def list_consumable_library(
+    status_filter: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    return await list_units(db, status=status_filter)
+
+
+@router.get("/consumable-library/summary", response_model=ConsumableLibrarySummary)
+async def get_consumable_library_summary(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    return await summary(db)
+
+
+@router.post("/consumable-library/batches", response_model=ConsumableBatchResponse, status_code=status.HTTP_201_CREATED)
+async def generate_consumable_batch(
+    payload: ConsumableBatchCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
+):
+    try:
+        return await create_batch(db, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/consumable-library/scan", response_model=ConsumableUnitResponse)
+async def scan_consumable_library(
+    payload: ConsumableLibraryScan,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
+):
+    try:
+        return await scan_unit(db, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/printer-consumables/targets", response_model=list[PrinterConsumableTarget])

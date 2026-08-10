@@ -51,6 +51,13 @@ export interface PrinterConsumable {
 export interface PrinterConsumableTarget {
   id:number; name:string; kind:'printer'|'virtual_printer'; model?:string|null; loaded_filaments:Array<Record<string,unknown>>;
 }
+export interface ConsumableUnit {
+  id:number; material_type_id:number; material_type_code:string; material:string; brand?:string|null;
+  color_name?:string|null; color_hex?:string|null; unit_code:string; status:string; label_batch_id:string;
+  remaining_weight_g?:number|null; storage_location?:string|null; generated_at:string;
+  received_at?:string|null; depleted_at?:string|null; scrapped_at?:string|null; replayed?:boolean;
+}
+export interface ConsumableSummary { generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; }
 export interface PlateJobPreviewItem {
   requirement_id:number; printer_profile_id?:number|null; planned_quantity:number;
   component_name:string; print_plan_name:string;
@@ -85,6 +92,12 @@ export const productionApi={
   listConsumableTargets:()=>request<PrinterConsumableTarget[]>('/production/printer-consumables/targets'),
   scanConsumable:(data:{operation_id:string;scan_code:string;material:string;color_hex:string;color_name?:string|null;spool_id?:number|null;printer_id?:number|null;virtual_printer_id?:number|null})=>
     request<PrinterConsumable & { replayed:boolean; replaced_id?:number|null }>('/production/printer-consumables/scan',{method:'POST',body:JSON.stringify(data)}),
+  listConsumableUnits:(status?:string)=>request<ConsumableUnit[]>('/production/consumable-library' + (status ? '?status_filter=' + encodeURIComponent(status) : '')),
+  consumableSummary:()=>request<ConsumableSummary>('/production/consumable-library/summary'),
+  generateConsumableBatch:(data:{operation_id:string;material_type_id:number;quantity:number;remaining_weight_g?:number|null})=>
+    request<{batch_id:string;items:ConsumableUnit[]}>('/production/consumable-library/batches',{method:'POST',body:JSON.stringify(data)}),
+  scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:'receive'|'deplete'|'scrap';remaining_weight_g?:number;storage_location?:string|null})=>
+    request<ConsumableUnit>('/production/consumable-library/scan',{method:'POST',body:JSON.stringify(data)}),
   downloadSliceArtifact: async (artifactId:number):Promise<void> => {
     const headers:Record<string,string> = {};
     const token = getAuthToken(); if (token) headers.Authorization = `Bearer ${token}`;

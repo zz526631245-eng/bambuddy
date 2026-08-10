@@ -34,11 +34,12 @@ from backend.app.models.product_master import (
     ProductionBOMItem,
 )
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
+from backend.app.models.production_consumable_unit import ProductionConsumableUnit
 from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
-from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.models.project import Project
 from backend.app.models.settings import Settings
+from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.slicer_pipeline import SlicerPipeline
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.smart_plug_energy_snapshot import SmartPlugEnergySnapshot
@@ -100,6 +101,7 @@ __all__ = [
     "ProductionRequirement",
     "PlateJob",
     "ProductionPrinterConsumable",
+    "ProductionConsumableUnit",
     "SliceArtifact",
     "OperationLog",
     "SlicerPipeline",

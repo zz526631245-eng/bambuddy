@@ -14,6 +14,7 @@ export default {
     materialTypes: 'Material Types',
     printerProfiles: 'Printer Profiles',
     printerConsumables: 'Direct Consumables',
+    consumableLibrary: 'Consumable Library',
     inventory: 'Filament',
     files: 'File Manager',
     makerworld: 'MakerWorld',

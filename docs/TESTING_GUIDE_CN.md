@@ -35,6 +35,14 @@ python -m pytest backend/tests/integration/test_stage12_direct_consumable_scan.p
 
 预期：4 项通过，覆盖真实/虚拟目标、首次扫码、重复操作幂等、重新扫码自动替换和颜色不匹配。
 
+耗材卷库定向测试：
+
+```powershell
+python -m pytest backend/tests/integration/test_stage12_consumable_library.py -q
+```
+
+预期：2 项通过，覆盖批量唯一编码、扫码入库幂等、库存统计、绑定后扫码耗尽和自动释放打印机。
+
 人工验收入口：http://127.0.0.1:8019/printer-consumables
 
 1. 选择软件测试打印机，录入扫码码、材料和颜色，点击“确认扫码登记”。
@@ -44,6 +52,14 @@ python -m pytest backend/tests/integration/test_stage12_direct_consumable_scan.p
 5. 该页面是扫码器协议的本地软件测试入口，阶段 14 前不会连接真实打印机或发送打印。
 6. 在“材料类型”中创建材料；每个材料卡片会显示二维码并提供 SVG 下载。手机系统相机扫描后会打开直供耗材页面并自动填入编码、材料和颜色。
 7. 网页摄像头按钮需要 HTTPS 或 localhost；普通局域网 HTTP 页面被浏览器拒绝摄像头权限时属于浏览器安全限制，不是后端扫码接口故障。
+
+手机 HTTPS 测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_stage12_https.ps1
+```
+
+然后用手机访问 `https://电脑局域网IP:8019/consumable-library`。开发证书只用于私有测试网络，手机需要接受/安装该证书；正式安装包不能使用该开发私钥。
 
 ## 阶段 8 后端定向测试
 

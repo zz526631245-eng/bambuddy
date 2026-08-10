@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { materialsApi, type MaterialInput, type MaterialType } from '../api/materials';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
+import { Link } from 'react-router-dom';
 
 const inputClass = 'bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white min-w-0';
 const empty: MaterialInput = { code: '', material: 'PLA', subtype: '', brand: '', color_name: '', color_hex: '#FFFFFF', is_active: true };
@@ -50,6 +51,7 @@ export function MaterialTypesPage() {
       <div className="mt-4 rounded-lg bg-white p-3 inline-flex"><QRCodeSVG id={'material-qr-' + material.id} value={qrPayload(material)} size={128} includeMargin /></div>
       <p className="text-xs text-bambu-gray mt-2 flex items-center gap-1"><QrCode size={14} />二维码内容：{material.code}</p>
       <Button type="button" variant="secondary" className="mt-3" onClick={() => downloadQr(material)}><Download size={16} />下载二维码</Button>
+      <Link to={'/consumable-library?material_type_id=' + material.id} className="ml-2 inline-flex items-center justify-center font-medium rounded-lg bg-bambu-green hover:bg-bambu-green-light text-white px-3 py-2 text-sm"><QrCode size={16} />生成耗材卷</Link>
     </CardContent></Card>)}</div>
   </div>;
 }

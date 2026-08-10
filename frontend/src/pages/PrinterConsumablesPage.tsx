@@ -4,15 +4,17 @@ import { Camera, CheckCircle2, ScanLine, X } from 'lucide-react';
 import { productionApi } from '../api/production';
 import { Button } from '../components/Button';
 import { Card, CardContent, CardHeader } from '../components/Card';
+import { useSearchParams } from 'react-router-dom';
 
 const inputClass = 'mt-1 w-full bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white';
 const operationId = () => 'direct-consumable-' + Date.now() + '-' + Math.random();
 
 export function PrinterConsumablesPage() {
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const targets = useQuery({ queryKey: ['printer-consumable-targets'], queryFn: productionApi.listConsumableTargets });
   const bindings = useQuery({ queryKey: ['printer-consumables'], queryFn: productionApi.listConsumables });
-  const [targetKey, setTargetKey] = React.useState('');
+  const [targetKey, setTargetKey] = React.useState(searchParams.get('printer') || '');
   const [scanCode, setScanCode] = React.useState('');
   const [material, setMaterial] = React.useState('PLA');
   const [colorHex, setColorHex] = React.useState('#FF0000');

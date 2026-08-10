@@ -14,6 +14,7 @@ export default {
     materialTypes: '材料类型',
     printerProfiles: '打印配置组',
     printerConsumables: '直供耗材',
+    consumableLibrary: '耗材库',
     inventory: '耗材',
     files: '文件管理器',
     makerworld: 'MakerWorld',

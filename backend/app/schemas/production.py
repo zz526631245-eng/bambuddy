@@ -68,6 +68,7 @@ class PrinterConsumableScan(BaseModel):
     color_hex: str = Field(min_length=6, max_length=8)
     color_name: str | None = Field(default=None, max_length=100)
     spool_id: int | None = None
+    consumable_unit_id: int | None = None
     printer_id: int | None = None
     virtual_printer_id: int | None = None
 
@@ -94,6 +95,7 @@ class PrinterConsumableResponse(_FromAttributes):
     printer_name: str | None
     virtual_printer_name: str | None
     spool_id: int | None
+    consumable_unit_id: int | None
     scan_code: str
     material: str
     color_hex: str
@@ -116,6 +118,55 @@ class PrinterConsumableTarget(_FromAttributes):
     kind: Literal["printer", "virtual_printer"]
     model: str | None
     loaded_filaments: list[dict]
+
+
+class ConsumableBatchCreate(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
+    material_type_id: int
+    quantity: int = Field(ge=1, le=1000)
+    remaining_weight_g: float | None = Field(default=None, gt=0)
+
+
+class ConsumableLibraryScan(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
+    unit_code: str = Field(min_length=1, max_length=100)
+    action: Literal["receive", "deplete", "scrap"]
+    remaining_weight_g: float | None = Field(default=None, ge=0)
+    storage_location: str | None = Field(default=None, max_length=255)
+
+
+class ConsumableUnitResponse(_FromAttributes):
+    id: int
+    material_type_id: int
+    material_type_code: str
+    material: str
+    brand: str | None
+    color_name: str | None
+    color_hex: str | None
+    unit_code: str
+    status: str
+    label_batch_id: str
+    remaining_weight_g: float | None
+    storage_location: str | None
+    generated_at: datetime
+    received_at: datetime | None
+    depleted_at: datetime | None
+    scrapped_at: datetime | None
+    replayed: bool = False
+
+
+class ConsumableBatchResponse(BaseModel):
+    batch_id: str
+    items: list[ConsumableUnitResponse]
+
+
+class ConsumableLibrarySummary(BaseModel):
+    generated: int
+    in_stock: int
+    bound: int
+    depleted: int
+    scrapped: int
+    total: int
 
 
 class PrinterProfileCreate(BaseModel):

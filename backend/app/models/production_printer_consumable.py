@@ -34,6 +34,9 @@ class ProductionPrinterConsumable(Base):
     spool_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("spool.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    consumable_unit_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("production_consumable_units.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     scan_code: Mapped[str] = mapped_column(String(128), index=True)
     material: Mapped[str] = mapped_column(String(50))
     color_hex: Mapped[str] = mapped_column(String(8))
@@ -47,3 +50,4 @@ class ProductionPrinterConsumable(Base):
     spool = relationship("Spool")
     printer = relationship("Printer")
     virtual_printer = relationship("VirtualPrinter")
+    consumable_unit = relationship("ProductionConsumableUnit", back_populates="direct_bindings")

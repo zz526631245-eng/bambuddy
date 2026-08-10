@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.printer import Printer
+from backend.app.models.production_consumable_unit import (
+    CONSUMABLE_BOUND,
+    CONSUMABLE_IN_STOCK,
+    ProductionConsumableUnit,
+)
 from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
 from backend.app.models.spool import Spool
 from backend.app.models.virtual_printer import VirtualPrinter
@@ -52,6 +57,7 @@ async def _serialize(binding: ProductionPrinterConsumable, db: AsyncSession, **e
         "printer_name": printer_name,
         "virtual_printer_name": virtual_printer_name,
         "spool_id": binding.spool_id,
+        "consumable_unit_id": binding.consumable_unit_id,
         "scan_code": binding.scan_code,
         "material": binding.material,
         "color_hex": binding.color_hex,
@@ -106,6 +112,18 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
     spool = await db.get(Spool, payload.spool_id) if payload.spool_id is not None else None
     if payload.spool_id is not None and spool is None:
         raise LookupError("耗材卷不存在")
+    unit = (
+        await db.get(ProductionConsumableUnit, payload.consumable_unit_id)
+        if payload.consumable_unit_id is not None
+        else None
+    )
+    if payload.consumable_unit_id is not None and unit is None:
+        raise LookupError("生产耗材卷不存在")
+    if unit is not None:
+        if unit.unit_code != payload.scan_code:
+            raise ValueError("扫码编码与耗材卷不一致")
+        if unit.status not in (CONSUMABLE_IN_STOCK, CONSUMABLE_BOUND):
+            raise ValueError("该耗材卷当前不能绑定打印机")
 
     current = (
         await db.execute(
@@ -120,11 +138,16 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
     if current:
         current.is_active = False
         current.replaced_at = now
+        if current.consumable_unit_id:
+            previous_unit = await db.get(ProductionConsumableUnit, current.consumable_unit_id)
+            if previous_unit and previous_unit.status == CONSUMABLE_BOUND:
+                previous_unit.status = CONSUMABLE_IN_STOCK
 
     binding = ProductionPrinterConsumable(
         printer_id=payload.printer_id,
         virtual_printer_id=payload.virtual_printer_id,
         spool_id=payload.spool_id,
+        consumable_unit_id=payload.consumable_unit_id,
         scan_code=payload.scan_code,
         material=payload.material,
         color_hex=payload.color_hex,
@@ -136,6 +159,8 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
     )
     db.add(binding)
     await db.flush()
+    if unit is not None:
+        unit.status = CONSUMABLE_BOUND
     target.loaded_filaments = _target_loaded_filament(
         payload.material, payload.color_hex, payload.color_name, payload.scan_code, binding.id
     )
