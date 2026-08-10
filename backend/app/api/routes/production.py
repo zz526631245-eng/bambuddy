@@ -17,6 +17,7 @@ from backend.app.core.permissions import Permission
 from backend.app.models.library import LibraryFile
 from backend.app.models.material_type import MaterialType
 from backend.app.models.operation_log import OperationLog
+from backend.app.models.printer import Printer
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product import Product
 from backend.app.models.product_master import MaterialTypeSpoolMapping, ProductComponent, ProductionBOMItem
@@ -26,6 +27,7 @@ from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.slicer_pipeline import SlicerPipeline
 from backend.app.models.spool import Spool
 from backend.app.models.user import User
+from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import (
     MaterialTypeCreate,
     MaterialTypeResponse,
@@ -35,6 +37,10 @@ from backend.app.schemas.production import (
     PlateJobPreviewResponse,
     PlateJobResponse,
     PlateJobWorkflowAction,
+    PrinterConsumableResponse,
+    PrinterConsumableScan,
+    PrinterConsumableScanResponse,
+    PrinterConsumableTarget,
     PrinterProfileCreate,
     PrinterProfileResponse,
     ProductionOrderCancelAction,
@@ -51,6 +57,7 @@ from backend.app.schemas.production import (
     SliceArtifactResponse,
 )
 from backend.app.services.production_allocator import allocate_plate_jobs
+from backend.app.services.production_consumable_service import list_bindings, scan_direct_consumable
 from backend.app.services.production_order_service import (
     ProductionOrderError,
     advance_virtual_plate_job,
@@ -73,6 +80,48 @@ from backend.app.services.production_slicer import (
 )
 
 router = APIRouter(prefix="/production", tags=["production"])
+
+
+@router.get("/printer-consumables/targets", response_model=list[PrinterConsumableTarget])
+async def list_printer_consumable_targets(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    printers = list((await db.execute(select(Printer).where(Printer.is_active.is_(True)).order_by(Printer.id))).scalars())
+    virtuals = list((await db.execute(select(VirtualPrinter).order_by(VirtualPrinter.id))).scalars())
+    return [
+        {"id": row.id, "name": row.name, "kind": "printer", "model": row.model, "loaded_filaments": row.loaded_filaments or []}
+        for row in printers
+    ] + [
+        {"id": row.id, "name": row.name, "kind": "virtual_printer", "model": row.model, "loaded_filaments": row.loaded_filaments or []}
+        for row in virtuals
+    ]
+
+
+@router.get("/printer-consumables", response_model=list[PrinterConsumableResponse])
+async def list_printer_consumables(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    """List current direct-feed consumables; AMS assignments are not included."""
+
+    return await list_bindings(db)
+
+
+@router.post("/printer-consumables/scan", response_model=PrinterConsumableScanResponse, status_code=status.HTTP_201_CREATED)
+async def scan_printer_consumable(
+    payload: PrinterConsumableScan,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
+):
+    """Register a scanned direct-feed spool and replace the previous one."""
+
+    try:
+        return await scan_direct_consumable(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 async def _commit_unique(db: AsyncSession, instance, conflict_detail: str):

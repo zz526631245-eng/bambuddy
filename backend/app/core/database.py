@@ -184,6 +184,7 @@ async def ensure_production_schema(conn):
         product_master,
         production,
         production_recipe,
+        production_printer_consumable,
     )
 
     await conn.run_sync(Base.metadata.create_all)

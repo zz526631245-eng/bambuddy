@@ -42,6 +42,15 @@ export interface SliceArtifact {
   print_time_seconds?:number|null; filament_used_g?:number|null; filament_used_mm?:number|null;
   output_sha256:string; created_at:string; updated_at:string;
 }
+export interface PrinterConsumable {
+  id:number; printer_id?:number|null; virtual_printer_id?:number|null;
+  printer_name?:string|null; virtual_printer_name?:string|null; spool_id?:number|null;
+  scan_code:string; material:string; color_hex:string; color_name?:string|null;
+  source:string; operation_id:string; is_active:boolean; scanned_at:string; replaced_at?:string|null;
+}
+export interface PrinterConsumableTarget {
+  id:number; name:string; kind:'printer'|'virtual_printer'; model?:string|null; loaded_filaments:Array<Record<string,unknown>>;
+}
 export interface PlateJobPreviewItem {
   requirement_id:number; printer_profile_id?:number|null; planned_quantity:number;
   component_name:string; print_plan_name:string;
@@ -72,6 +81,10 @@ export const productionApi={
     request<PlateJob>(`/production/plate-jobs/${plateJobId}/workflow/${action}`,{method:'POST',body:JSON.stringify({operation_id:operationId(`plate-${action}`),...(data ?? {})})}),
   realSlice:(plateJobId:number,data?:{target_printer_preset?:string;target_printer_model?:string})=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/real-slice`,{method:'POST',body:JSON.stringify(data ?? {})}),
   listSliceArtifacts:()=>request<SliceArtifact[]>('/production/slice-artifacts'),
+  listConsumables:()=>request<PrinterConsumable[]>('/production/printer-consumables'),
+  listConsumableTargets:()=>request<PrinterConsumableTarget[]>('/production/printer-consumables/targets'),
+  scanConsumable:(data:{operation_id:string;scan_code:string;material:string;color_hex:string;color_name?:string|null;spool_id?:number|null;printer_id?:number|null;virtual_printer_id?:number|null})=>
+    request<PrinterConsumable & { replayed:boolean; replaced_id?:number|null }>('/production/printer-consumables/scan',{method:'POST',body:JSON.stringify(data)}),
   downloadSliceArtifact: async (artifactId:number):Promise<void> => {
     const headers:Record<string,string> = {};
     const token = getAuthToken(); if (token) headers.Authorization = `Bearer ${token}`;

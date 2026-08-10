@@ -34,6 +34,7 @@ from backend.app.models.product_master import (
     ProductionBOMItem,
 )
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
+from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
 from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.models.project import Project
@@ -98,6 +99,7 @@ __all__ = [
     "ProductionOrder",
     "ProductionRequirement",
     "PlateJob",
+    "ProductionPrinterConsumable",
     "SliceArtifact",
     "OperationLog",
     "SlicerPipeline",

@@ -138,6 +138,7 @@ async def test_engine():
         printer_profile,
         product,
         production,
+        production_printer_consumable,
         production_recipe,
         project,
         project_bom,

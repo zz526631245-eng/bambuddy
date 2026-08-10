@@ -13,6 +13,7 @@ export default {
     sliceLibrary: 'Slice Library',
     materialTypes: 'Material Types',
     printerProfiles: 'Printer Profiles',
+    printerConsumables: 'Direct Consumables',
     inventory: 'Filament',
     files: 'File Manager',
     makerworld: 'MakerWorld',

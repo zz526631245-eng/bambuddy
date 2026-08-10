@@ -18,6 +18,7 @@ import { PrinterProfilesPage } from './pages/PrinterProfilesPage';
 import { ProductionOrdersPage } from './pages/ProductionOrdersPage';
 import { ProductionOrderDetailPage } from './pages/ProductionOrderDetailPage';
 import { SliceLibraryPage } from './pages/SliceLibraryPage';
+import { PrinterConsumablesPage } from './pages/PrinterConsumablesPage';
 import { FileManagerPage } from './pages/FileManagerPage';
 import { LibraryTrashPage } from './pages/LibraryTrashPage';
 import { CameraPage } from './pages/CameraPage';
@@ -220,6 +221,7 @@ function App() {
                   <Route path="production-orders" element={<PermissionRoute permission="production_orders:read"><ProductionOrdersPage /></PermissionRoute>} />
                   <Route path="production-orders/:id" element={<PermissionRoute permission="production_orders:read"><ProductionOrderDetailPage /></PermissionRoute>} />
                   <Route path="slice-library" element={<PermissionRoute permission="production_orders:read"><SliceLibraryPage /></PermissionRoute>} />
+                  <Route path="printer-consumables" element={<PermissionRoute permission="plate_jobs:read"><PrinterConsumablesPage /></PermissionRoute>} />
                   <Route path="inventory" element={<InventoryPage />} />
                   <Route path="files" element={<FileManagerPage />} />
                   <Route path="files/trash" element={<LibraryTrashPage />} />

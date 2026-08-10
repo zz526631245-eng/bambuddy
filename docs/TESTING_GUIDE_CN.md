@@ -27,6 +27,22 @@ npm.cmd test -- --run src/__tests__/pages/Stage8ProductionOrders.test.tsx
 
 预期：7 项通过。
 
+## 阶段 12 直供耗材扫码
+
+```powershell
+python -m pytest backend/tests/integration/test_stage12_direct_consumable_scan.py -q
+```
+
+预期：4 项通过，覆盖真实/虚拟目标、首次扫码、重复操作幂等、重新扫码自动替换和颜色不匹配。
+
+人工验收入口：http://127.0.0.1:8019/printer-consumables
+
+1. 选择软件测试打印机，录入扫码码、材料和颜色，点击“确认扫码登记”。
+2. 再录入另一条扫码码；当前列表只保留新耗材，并提示旧耗材已自动替换。
+3. 访问生产订单确认任务，颜色要求与当前直供耗材一致时才会匹配；颜色不一致时任务保持等待。
+4. AMS 槽位不参与该页面，也不会被清除。
+5. 该页面是扫码器协议的本地软件测试入口，阶段 14 前不会连接真实打印机或发送打印。
+
 ## 阶段 8 后端定向测试
 
 ```powershell
