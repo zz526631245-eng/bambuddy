@@ -15,6 +15,7 @@ from backend.app.core.database import (
     ensure_stage7_columns,
     ensure_stage8_columns,
     ensure_stage11_columns,
+    ensure_stage12_columns,
 )
 from backend.app.models.production import PRODUCTION_TABLE_NAMES
 
@@ -176,4 +177,46 @@ async def test_sqlite_stage10_to_stage11_columns_preserve_jobs_and_repeat(tmp_pa
         "quality_confirmed_at",
         "cleanup_confirmed_at",
     } <= columns
+    await engine.dispose()
+
+
+async def test_sqlite_stage11_to_stage12_consumable_link_preserves_bindings_and_repeat(tmp_path: Path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stage11-to-12.db'}")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE production_consumable_units (id INTEGER PRIMARY KEY)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE production_printer_consumables ("
+                "id INTEGER PRIMARY KEY, virtual_printer_id INTEGER, scan_code VARCHAR(128), "
+                "material VARCHAR(50), color_hex VARCHAR(8), operation_id VARCHAR(100), is_active BOOLEAN)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO production_printer_consumables "
+                "(id, virtual_printer_id, scan_code, material, color_hex, operation_id, is_active) "
+                "VALUES (1, 1, 'LEGACY', 'PLA', 'FFFFFF', 'op-1', 1)"
+            )
+        )
+        await ensure_stage12_columns(conn)
+        await ensure_stage12_columns(conn)
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT scan_code, material, color_hex, consumable_unit_id "
+                    "FROM production_printer_consumables WHERE id = 1"
+                )
+            )
+        ).one()
+        columns = {
+            column[1]
+            for column in (await conn.execute(text("PRAGMA table_info(production_printer_consumables)"))).all()
+        }
+
+    assert row == ("LEGACY", "PLA", "FFFFFF", None)
+    assert "consumable_unit_id" in columns
     await engine.dispose()

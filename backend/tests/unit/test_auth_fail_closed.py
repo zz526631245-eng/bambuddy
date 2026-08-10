@@ -16,11 +16,20 @@ These tests pin the fail-closed contract:
 3. ``setting.value == "true"`` still returns True.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from backend.app.core.auth import is_auth_enabled
+
+
+def _make_locked_error() -> OperationalError:
+    return OperationalError(
+        statement="SELECT value FROM settings",
+        params=(),
+        orig=Exception("database is locked"),
+    )
 
 
 @pytest.mark.asyncio
@@ -79,3 +88,37 @@ async def test_is_auth_enabled_returns_false_when_setting_value_is_false():
     db.execute = AsyncMock(return_value=result)
 
     assert await is_auth_enabled(db) is False
+
+
+@pytest.mark.asyncio
+async def test_is_auth_enabled_retries_transient_sqlite_lock():
+    """A short SQLite writer lock must not turn a healthy auth-disabled
+    instance into a user-visible 503."""
+
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=None)
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_make_locked_error(), result])
+
+    with patch("backend.app.core.auth.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        assert await is_auth_enabled(db) is False
+
+    db.rollback.assert_awaited_once()
+    sleep.assert_awaited_once_with(0.1)
+
+
+@pytest.mark.asyncio
+async def test_is_auth_enabled_still_fails_closed_after_persistent_lock():
+    """Retrying must not weaken the fail-closed security contract."""
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=_make_locked_error())
+
+    with (
+        patch("backend.app.core.auth.asyncio.sleep", new_callable=AsyncMock) as sleep,
+        pytest.raises(OperationalError, match="database is locked"),
+    ):
+        await is_auth_enabled(db)
+
+    assert db.rollback.await_count == 2
+    assert sleep.await_count == 2

@@ -333,6 +333,26 @@ async def ensure_stage11_columns(conn):
     await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN cleanup_confirmed_at DATETIME")
 
 
+async def ensure_stage12_columns(conn):
+    """Add direct-consumable inventory links introduced in Stage 12.
+
+    ``create_all`` does not alter an existing Stage 11 binding table, so
+    installations upgraded in place need this explicit, repeatable column
+    migration before the ORM can list or confirm a scanned consumable.
+    """
+
+    await _safe_execute(
+        conn,
+        "ALTER TABLE production_printer_consumables ADD COLUMN consumable_unit_id INTEGER "
+        "REFERENCES production_consumable_units(id) ON DELETE SET NULL",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_printer_consumables_consumable_unit_id "
+        "ON production_printer_consumables (consumable_unit_id)",
+    )
+
+
 async def init_db():
     # Import models to register them with SQLAlchemy
     from backend.app.models import (  # noqa: F401
@@ -857,6 +877,7 @@ async def run_migrations(conn):
     await ensure_stage9_columns(conn)
     await ensure_stage10_slice_artifacts(conn)
     await ensure_stage11_columns(conn)
+    await ensure_stage12_columns(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

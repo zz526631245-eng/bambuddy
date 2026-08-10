@@ -61,3 +61,10 @@
 - `operation_id` 仍然幂等，重复识别不会重复创建绑定；旧直供耗材继续自动失效并保留审计记录。
 - 网页扫码改用 `@zxing/browser`，不再只依赖浏览器实验性的 `BarcodeDetector`，覆盖 iOS Safari 和不支持原生识别器的移动浏览器。
 - 二维码地址支持 `VITE_PUBLIC_BASE_URL`；不要在 `127.0.0.1` 页面生成给手机使用的二维码，应从手机可访问的 HTTPS 地址生成。
+
+## 确认登记 503 修复（2026-08-10）
+
+- 根因：已有数据库的 `production_printer_consumables` 表没有 `consumable_unit_id`，ORM 查询因此抛出 `no such column`；由于调用位于认证中间件的 try 块内，前端看到的是误导性的 503 认证服务提示。
+- 修复：`ensure_stage12_columns` 以可重复迁移方式添加列和索引；认证探针对 SQLite 短暂锁重试，但持久或非锁异常仍拒绝请求。
+- 验证：重启后列表接口返回 200；使用已有 `operation_id` 回放确认登记返回 201 且 `replayed=true`；`PRAGMA integrity_check` 返回 `ok`。
+- 维护注意：SQLite 生产模式仍要求单个 Bambuddy 进程；不要同时运行其他端口的旧服务共用同一 `bambuddy.db`。

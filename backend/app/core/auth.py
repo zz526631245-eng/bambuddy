@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -12,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import PyJWTError as JWTError
 from passlib.context import CryptContext
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +25,8 @@ from backend.app.models.settings import Settings
 from backend.app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+_AUTH_PROBE_MAX_ATTEMPTS = 3
 
 # GHSA-r2qv-8222-hqg3 (CVSS 9.9) — API key permission enforcement is allowlist-based.
 #
@@ -882,11 +886,31 @@ async def is_auth_enabled(db: AsyncSession) -> bool:
     schema mismatch, …) propagates so the caller can deny the request
     (503 / 500). Fail-closed is the only safe default for an auth probe.
     """
-    result = await db.execute(select(Settings).where(Settings.key == "auth_enabled"))
-    setting = result.scalar_one_or_none()
-    if setting is None:
-        return False
-    return setting.value.lower() == "true"
+    query = select(Settings).where(Settings.key == "auth_enabled")
+    for attempt in range(1, _AUTH_PROBE_MAX_ATTEMPTS + 1):
+        try:
+            result = await db.execute(query)
+            setting = result.scalar_one_or_none()
+            if setting is None:
+                return False
+            return setting.value.lower() == "true"
+        except OperationalError as exc:
+            # SQLite permits only one writer. A concurrent spool/queue write
+            # can briefly make the auth status probe fail even though the
+            # database is healthy. Retry with a fresh transaction while still
+            # propagating every non-lock error (and a persistent lock) so auth
+            # remains fail-closed.
+            if "database is locked" not in str(exc).lower() or attempt == _AUTH_PROBE_MAX_ATTEMPTS:
+                raise
+            await db.rollback()
+            delay = 0.1 * attempt
+            logger.warning(
+                "SQLite locked during auth probe (attempt %d/%d), retrying in %.1fs",
+                attempt,
+                _AUTH_PROBE_MAX_ATTEMPTS,
+                delay,
+            )
+            await asyncio.sleep(delay)
 
 
 async def _user_from_api_key(db: AsyncSession, api_key: APIKey) -> User | None:

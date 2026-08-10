@@ -78,7 +78,7 @@ from backend.app.api.routes import (
 from backend.app.api.routes.maintenance import _get_printer_maintenance_internal, ensure_default_types
 from backend.app.api.routes.support import init_debug_logging
 from backend.app.core.config import APP_VERSION, settings as app_settings
-from backend.app.core.database import async_session, engine, init_db
+from backend.app.core.database import async_session, engine, init_db, run_with_retry
 from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.smart_plug import SmartPlug
@@ -6577,20 +6577,28 @@ async def auth_middleware(request, call_next):
     # an attacker who could force a DB exception (e.g. file-descriptor
     # exhaustion via login flood) bypass auth on every protected endpoint.
     try:
-        async with async_session() as db:
+        async def _probe_auth(db):
             from backend.app.core.auth import is_auth_enabled
 
-            auth_enabled = await is_auth_enabled(db)
+            return await is_auth_enabled(db)
 
-        if not auth_enabled:
-            # Auth disabled, allow all requests
-            return await call_next(request)
+        # A concurrent SQLite writer can briefly fail either while acquiring
+        # the pooled connection or while running the settings query. Retry the
+        # whole session so a transient lock does not surface as a false 503;
+        # persistent/non-lock failures still fail closed below.
+        auth_enabled = await run_with_retry(_probe_auth, label="auth probe")
     except Exception:
         logging.getLogger(__name__).exception("auth_middleware: failing closed on auth-probe error from %s", path)
         return JSONResponse(
             status_code=503,
             content={"detail": "Authentication service temporarily unavailable"},
         )
+
+    if not auth_enabled:
+        # Auth disabled, allow all requests. Keep this outside the probe's
+        # exception handler so route/database errors retain their real status
+        # instead of being mislabeled as authentication failures.
+        return await call_next(request)
 
     # Auth is enabled - require valid token
     auth_header = request.headers.get("Authorization")
