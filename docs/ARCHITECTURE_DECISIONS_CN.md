@@ -77,3 +77,8 @@ Products persist a user-declared `size_class` (`standard` or `large`) and copy i
 ## AD-020：手机摄像头测试使用本地 HTTPS
 
 本地开发提供自签名 HTTPS 启动脚本和 30 天开发证书，证书只写入被忽略的数据目录。手机摄像头只能在 HTTPS 或 localhost 等安全上下文使用；正式部署应使用用户信任的局域网证书/反向代理证书，不把开发私钥打进安装包。
+## AD-021：锁定打印机后的耗材扫码立即登记
+
+在打印机目标已由二维码锁定后，耗材卷二维码只需提交唯一 unit_code；后端从生产耗材卷和材料主数据读取材料、颜色并立即创建直供绑定。该动作仍使用 operation_id 幂等和旧绑定审计，不在前端计算库存或颜色。
+
+网页摄像头识别使用 ZXing 作为跨浏览器实现，避免把生产流程绑定到实验性的 BarcodeDetector。二维码生成地址可通过 VITE_PUBLIC_BASE_URL 配置，禁止把回环地址作为手机标签地址。

@@ -29,6 +29,7 @@
     "@tiptap/react": "^3.11.1",
     "@tiptap/starter-kit": "^3.11.1",
     "@types/three": "^0.181.0",
+    "@zxing/browser": "^0.2.1",
     "dompurify": "^3.4.10",
     "gcode-preview": "^2.18.0",
     "i18next": "25.6.3",

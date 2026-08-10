@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Camera, CheckCircle2, ScanLine, X } from 'lucide-react';
 import { productionApi } from '../api/production';
@@ -8,6 +9,32 @@ import { useSearchParams } from 'react-router-dom';
 
 const inputClass = 'mt-1 w-full bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white';
 const operationId = () => 'direct-consumable-' + Date.now() + '-' + Math.random();
+
+type ParsedScan = { scanCode: string; targetKey?: string; material?: string; colorHex?: string; colorName?: string };
+
+function parseScanValue(rawValue: string): ParsedScan {
+  const value = rawValue.trim();
+  try {
+    const parsed = new URL(value);
+    const targetKey = parsed.searchParams.get('printer') || undefined;
+    const nested = parsed.searchParams.get('scan');
+    if (nested) {
+      return { ...parseScanValue(nested), ...(targetKey ? { targetKey } : {}) };
+    }
+    if (parsed.protocol === 'bambuddy:') {
+      return {
+        scanCode: parsed.searchParams.get('code') || value,
+        targetKey,
+        material: parsed.searchParams.get('material') || undefined,
+        colorHex: parsed.searchParams.get('color') || undefined,
+        colorName: parsed.searchParams.get('name') || undefined,
+      };
+    }
+  } catch {
+    // Plain scanner codes are valid QR values too.
+  }
+  return { scanCode: value };
+}
 
 export function PrinterConsumablesPage() {
   const [searchParams] = useSearchParams();
@@ -22,6 +49,7 @@ export function PrinterConsumablesPage() {
   const [message, setMessage] = React.useState('');
   const [cameraOpen, setCameraOpen] = React.useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
+  const scannerControlsRef = React.useRef<IScannerControls | null>(null);
   const deepLinkApplied = React.useRef(false);
   const scan = useMutation({
     mutationFn: productionApi.scanConsumable,
@@ -32,6 +60,7 @@ export function PrinterConsumablesPage() {
       setScanCode('');
     },
   });
+  const { mutate: registerScan } = scan;
   const selected = targets.data?.find(item => item.kind + ':' + item.id === targetKey);
   const applyScannedPayload = React.useCallback((rawValue: string) => {
     try {
@@ -50,43 +79,62 @@ export function PrinterConsumablesPage() {
     setCameraOpen(false);
     setMessage('二维码已读取，请确认打印机后提交登记。');
   }, [colorHex, colorName, material]);
+  const handleDecodedValue = React.useCallback((rawValue: string) => {
+    const parsed = parseScanValue(rawValue);
+    if (parsed.targetKey) setTargetKey(parsed.targetKey);
+    if (parsed.material) setMaterial(parsed.material);
+    if (parsed.colorHex) setColorHex(parsed.colorHex.startsWith('#') ? parsed.colorHex : '#' + parsed.colorHex);
+    if (parsed.colorName) setColorName(parsed.colorName);
+    setScanCode(parsed.scanCode);
+    const targetKeyToUse = parsed.targetKey || targetKey;
+    const targetToUse = targets.data?.find(item => item.kind + ':' + item.id === targetKeyToUse);
+    if (!targetToUse) {
+      applyScannedPayload(parsed.scanCode);
+      setMessage('请先扫描或选择打印机，再扫描耗材二维码。');
+      return;
+    }
+    setCameraOpen(false);
+    registerScan({
+      operation_id: operationId(),
+      scan_code: parsed.scanCode,
+      material: parsed.material || null,
+      color_hex: parsed.colorHex || null,
+      color_name: parsed.colorName || null,
+      ...(targetToUse.kind === 'printer' ? { printer_id: targetToUse.id } : { virtual_printer_id: targetToUse.id }),
+    });
+  }, [applyScannedPayload, registerScan, targetKey, targets.data]);
   React.useEffect(() => {
     if (deepLinkApplied.current) return;
     const encoded = new URLSearchParams(window.location.search).get('scan');
     if (!encoded) return;
     deepLinkApplied.current = true;
-    applyScannedPayload(encoded);
-  }, [applyScannedPayload]);
+    handleDecodedValue(encoded);
+  }, [handleDecodedValue]);
   React.useEffect(() => {
     if (!cameraOpen) return;
-    let stream: MediaStream | null = null;
-    let frame = 0;
     let stopped = false;
     const start = async () => {
-      const detectorCtor = (window as unknown as { BarcodeDetector?: new (options?: { formats: string[] }) => { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
-      if (!detectorCtor || !navigator.mediaDevices?.getUserMedia) {
+      if (!navigator.mediaDevices?.getUserMedia) {
         setMessage('当前浏览器不支持摄像头二维码识别，请使用扫码枪或手动输入。');
         setCameraOpen(false);
         return;
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
         if (!videoRef.current) return;
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        const detector = new detectorCtor({ formats: ['qr_code'] });
-        const scanFrame = async () => {
-          if (stopped || !videoRef.current) return;
-          try {
-            const codes = await detector.detect(videoRef.current);
-            if (codes[0]?.rawValue) {
-              applyScannedPayload(codes[0].rawValue);
-              return;
+        // ZXing owns the media stream here, so it works on browsers without
+        // the experimental BarcodeDetector API.
+        const reader = new BrowserQRCodeReader();
+        scannerControlsRef.current = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: 'environment' } }, audio: false },
+          videoRef.current,
+          result => {
+            if (result?.getText() && !stopped) {
+              scannerControlsRef.current?.stop();
+              handleDecodedValue(result.getText());
             }
-          } catch { /* camera frame may not be ready yet */ }
-          frame = requestAnimationFrame(scanFrame);
-        };
-        frame = requestAnimationFrame(scanFrame);
+          },
+        );
+        return;
       } catch {
         setMessage('无法打开手机摄像头，请检查浏览器权限或改用手动输入。');
         setCameraOpen(false);
@@ -95,10 +143,10 @@ export function PrinterConsumablesPage() {
     void start();
     return () => {
       stopped = true;
-      cancelAnimationFrame(frame);
-      stream?.getTracks().forEach(track => track.stop());
+      scannerControlsRef.current?.stop();
+      scannerControlsRef.current = null;
     };
-  }, [applyScannedPayload, cameraOpen]);
+  }, [applyScannedPayload, cameraOpen, handleDecodedValue]);
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!selected || !scanCode.trim()) return;
@@ -114,6 +162,7 @@ export function PrinterConsumablesPage() {
         <label className="text-sm text-bambu-gray">颜色<span className="mt-1 flex gap-2"><input aria-label="颜色值" type="color" value={colorHex} onChange={event => setColorHex(event.target.value)} className="h-10 w-14 bg-bambu-dark" /><input aria-label="颜色名称" value={colorName} onChange={event => setColorName(event.target.value)} placeholder="例如 红色" className="flex-1 bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white" /></span></label>
         <div className="md:col-span-2 flex items-end gap-3"><Button type="button" variant="secondary" onClick={() => setCameraOpen(true)}><Camera size={16} />打开摄像头扫码</Button><Button type="submit" disabled={scan.isPending || !selected}><ScanLine size={16} />确认登记</Button>{message && <span className="text-sm text-bambu-green flex items-center gap-1"><CheckCircle2 size={16} />{message}</span>}{scan.error && <span className="text-sm text-red-400">{String(scan.error)}</span>}</div>
       </form>
+      <p className="text-xs text-bambu-gray mt-3">已锁定打印机后，耗材二维码识别成功会立即登记；手动输入仍可使用“确认登记”。</p>
       <p className="text-xs text-bambu-gray mt-3">当前是软件扫码测试入口。真实扫码器后续只需调用同一个接口，不会自动连接打印机。</p>
     </CardContent></Card>
     <Card><CardHeader><h2 className="text-xl font-semibold text-white">当前直供耗材</h2></CardHeader><CardContent>{(bindings.data ?? []).length === 0 ? <p className="text-bambu-gray">还没有登记直供耗材。</p> : <div className="grid md:grid-cols-2 gap-3">{(bindings.data ?? []).map(binding => <div key={binding.id} className="rounded border border-bambu-gray-dark bg-bambu-dark p-3 flex gap-3 items-center"><span className="w-10 h-10 rounded-full border border-white/20" style={{ background: '#' + binding.color_hex.slice(0, 6) }} /><div><p className="text-white font-semibold">{binding.virtual_printer_name || binding.printer_name || '未命名打印机'}</p><p className="text-bambu-gray">{binding.material} · {binding.color_name || binding.color_hex} · 扫描码 {binding.scan_code}</p><p className="text-xs text-bambu-gray">直供耗材 · {new Date(binding.scanned_at).toLocaleString()}</p></div></div>)}</div>}</CardContent></Card>

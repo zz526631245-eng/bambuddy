@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.models.material_type import MaterialType
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.printer import Printer
 from backend.app.models.production_consumable_unit import (
@@ -115,15 +116,38 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
     unit = (
         await db.get(ProductionConsumableUnit, payload.consumable_unit_id)
         if payload.consumable_unit_id is not None
-        else None
+        else (
+            await db.execute(
+                select(ProductionConsumableUnit).where(
+                    ProductionConsumableUnit.unit_code == payload.scan_code
+                )
+            )
+        ).scalar_one_or_none()
     )
     if payload.consumable_unit_id is not None and unit is None:
         raise LookupError("生产耗材卷不存在")
+    effective_material = payload.material
+    effective_color_hex = payload.color_hex
+    effective_color_name = payload.color_name
     if unit is not None:
+        material_type = await db.get(MaterialType, unit.material_type_id)
+        if material_type is None or not material_type.color_hex:
+            raise ValueError("consumable unit material type is missing material or color")
+        if effective_material is not None and effective_material.upper() != material_type.material.upper():
+            raise ValueError("scanned material does not match consumable unit")
+        if effective_color_hex is not None and effective_color_hex.upper().lstrip("#") != material_type.color_hex.upper().lstrip("#"):
+            raise ValueError("scanned color does not match consumable unit")
+        effective_material = material_type.material.upper()
+        effective_color_hex = material_type.color_hex.lstrip("#").upper()
+        effective_color_name = material_type.color_name
+        payload.consumable_unit_id = unit.id
         if unit.unit_code != payload.scan_code:
             raise ValueError("扫码编码与耗材卷不一致")
         if unit.status not in (CONSUMABLE_IN_STOCK, CONSUMABLE_BOUND):
             raise ValueError("该耗材卷当前不能绑定打印机")
+
+    if effective_material is None or effective_color_hex is None:
+        raise ValueError("material and color are required unless a consumable unit is scanned")
 
     current = (
         await db.execute(
@@ -149,9 +173,9 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
         spool_id=payload.spool_id,
         consumable_unit_id=payload.consumable_unit_id,
         scan_code=payload.scan_code,
-        material=payload.material,
-        color_hex=payload.color_hex,
-        color_name=payload.color_name,
+        material=effective_material,
+        color_hex=effective_color_hex,
+        color_name=effective_color_name,
         source="scanner",
         operation_id=payload.operation_id,
         is_active=True,
@@ -162,7 +186,7 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
     if unit is not None:
         unit.status = CONSUMABLE_BOUND
     target.loaded_filaments = _target_loaded_filament(
-        payload.material, payload.color_hex, payload.color_name, payload.scan_code, binding.id
+        effective_material, effective_color_hex, effective_color_name, payload.scan_code, binding.id
     )
     db.add(
         OperationLog(
@@ -174,8 +198,8 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
                 "printer_id": payload.printer_id,
                 "virtual_printer_id": payload.virtual_printer_id,
                 "scan_code": payload.scan_code,
-                "material": payload.material,
-                "color_hex": payload.color_hex,
+                "material": effective_material,
+                "color_hex": effective_color_hex,
                 "replaced_id": replaced_id,
             },
         )

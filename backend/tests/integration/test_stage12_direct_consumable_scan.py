@@ -161,3 +161,53 @@ async def test_real_printer_binding_uses_same_direct_feed_contract(
     await db_session.refresh(printer)
     assert printer.loaded_filaments[0]["slot"] == 254
     assert response.json()["printer_name"] == "Stage 12 real placeholder"
+
+
+async def test_scanning_consumable_unit_auto_registers_its_material_and_colour(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    material = await async_client.post(
+        "/api/v1/production/material-types",
+        json={
+            "code": "AUTO-PLA-WHITE",
+            "material": "PLA",
+            "brand": "3DR",
+            "color_name": "白色",
+            "color_hex": "#FFFFFF",
+        },
+    )
+    assert material.status_code == 201, material.text
+    batch = await async_client.post(
+        "/api/v1/production/consumable-library/batches",
+        json={
+            "operation_id": "stage12-auto-register-batch",
+            "material_type_id": material.json()["id"],
+            "quantity": 1,
+        },
+    )
+    assert batch.status_code == 201, batch.text
+    unit = batch.json()["items"][0]
+    received = await async_client.post(
+        "/api/v1/production/consumable-library/scan",
+        json={
+            "operation_id": "stage12-auto-register-receive",
+            "unit_code": unit["unit_code"],
+            "action": "receive",
+        },
+    )
+    assert received.status_code == 200, received.text
+
+    virtual = await _virtual(db_session, "AUTO")
+    response = await async_client.post(
+        "/api/v1/production/printer-consumables/scan",
+        json={
+            "operation_id": "stage12-auto-register-bind",
+            "scan_code": unit["unit_code"],
+            "virtual_printer_id": virtual.id,
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["consumable_unit_id"] == unit["id"]
+    assert response.json()["material"] == "PLA"
+    assert response.json()["color_hex"] == "FFFFFF"
+    assert response.json()["color_name"] == "白色"

@@ -64,24 +64,28 @@ class PrinterConsumableScan(BaseModel):
 
     operation_id: str = Field(min_length=1, max_length=100)
     scan_code: str = Field(min_length=1, max_length=128)
-    material: str = Field(min_length=1, max_length=50)
-    color_hex: str = Field(min_length=6, max_length=8)
+    # Material and colour can be omitted when a generated consumable unit is
+    # scanned: the backend derives them from the unit's material master.
+    material: str | None = Field(default=None, min_length=1, max_length=50)
+    color_hex: str | None = Field(default=None, min_length=6, max_length=8)
     color_name: str | None = Field(default=None, max_length=100)
     spool_id: int | None = None
     consumable_unit_id: int | None = None
     printer_id: int | None = None
     virtual_printer_id: int | None = None
 
-    _strip_fields = field_validator("operation_id", "scan_code", "material")(_strip_required)
+    _strip_fields = field_validator("operation_id", "scan_code")(_strip_required)
 
     @field_validator("material")
     @classmethod
-    def normalize_material(cls, value: str) -> str:
-        return value.upper()
+    def normalize_material(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
 
     @field_validator("color_hex")
     @classmethod
-    def normalize_color(cls, value: str) -> str:
+    def normalize_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip().lstrip("#").upper()
         if len(value) not in (6, 8) or any(char not in "0123456789ABCDEF" for char in value):
             raise ValueError("color_hex must be a 6 or 8 digit hexadecimal color")

@@ -6,6 +6,7 @@ import { materialsApi, type MaterialInput, type MaterialType } from '../api/mate
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
 import { Link } from 'react-router-dom';
+import { isLoopbackPage, mobileBaseUrl } from '../utils/mobileUrl';
 
 const inputClass = 'bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white min-w-0';
 const empty: MaterialInput = { code: '', material: 'PLA', subtype: '', brand: '', color_name: '', color_hex: '#FFFFFF', is_active: true };
@@ -13,7 +14,7 @@ const empty: MaterialInput = { code: '', material: 'PLA', subtype: '', brand: ''
 function qrPayload(material: MaterialType): string {
   const params = new URLSearchParams({ v: '1', code: material.code, material: material.material, color: (material.color_hex || '').replace(/^#/, ''), name: material.color_name || '' });
   const payload = 'bambuddy://material?' + params.toString();
-  return window.location.origin + '/printer-consumables?scan=' + encodeURIComponent(payload);
+  return mobileBaseUrl() + '/printer-consumables?scan=' + encodeURIComponent(payload);
 }
 
 function downloadQr(material: MaterialType) {
@@ -35,6 +36,7 @@ export function MaterialTypesPage() {
   const create = useMutation({ mutationFn: materialsApi.create, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['material-types'] }); setForm(empty); } });
   const submit = (event: FormEvent) => { event.preventDefault(); create.mutate(form); };
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
+    {isLoopbackPage() && !import.meta.env.VITE_PUBLIC_BASE_URL && <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">当前页面是 127.0.0.1，生成的二维码手机无法访问。请用手机可访问的 HTTPS 地址打开本页，或配置 VITE_PUBLIC_BASE_URL 后再生成标签。</div>}
     <div><h1 className="text-3xl font-bold text-white">材料类型</h1><p className="text-bambu-gray mt-1">创建材料后自动生成专属二维码，手机摄像头或扫码枪都可以读取。</p></div>
     <Card><CardContent><form onSubmit={submit} className="grid sm:grid-cols-2 lg:grid-cols-7 gap-3">
       <input required placeholder="编码" value={form.code} onChange={event => setForm({ ...form, code: event.target.value })} className={inputClass} />
