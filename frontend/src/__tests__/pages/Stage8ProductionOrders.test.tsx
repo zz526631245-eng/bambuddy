@@ -8,6 +8,7 @@ import { ProductionOrderDetailPage } from '../../pages/ProductionOrderDetailPage
 const api = vi.hoisted(() => ({
   listOrders: vi.fn(), listProductSummaries: vi.fn(), createOrder: vi.fn(), getOrder: vi.fn(),
   changeStatus: vi.fn(), cancelOrder: vi.fn(), previewJobs: vi.fn(), confirmJobs: vi.fn(),
+  advanceWorkflow: vi.fn(), retrySlice: vi.fn(), realSlice: vi.fn(), cancelPlateJob: vi.fn(), deletePlateJob: vi.fn(), downloadSliceArtifact: vi.fn(), deleteOrder: vi.fn(),
 }));
 const products = vi.hoisted(() => ({ list: vi.fn() }));
 
@@ -97,5 +98,15 @@ describe('Production orders and product summaries', () => {
     api.getOrder.mockResolvedValue({ id: 9, order_number: 'PO-9', product_id: 1, quantity: 1, priority: 0, status: 'planned', product_snapshot: { name: '演示产品' }, operations: [], requirements: [{ id: 4, component_id: 2, unit_quantity: 1, status: 'in_progress', component_snapshot: { name: '外壳' }, recipe_snapshot: { name: '外壳打印方案' }, ledger: { planned: 1, reserved: 1, good: 0, scrap: 0, remaining: 0 }, plate_jobs: [{ id: 7, requirement_id: 4, printer_profile_id: 3, queue_item_id: 42, planned_quantity: 1, status: 'assigned' }] }] });
     wrapper('/production-orders/9');
     expect(await screen.findByText(/打印任务 #7/)).toBeInTheDocument();
+  });
+
+  it('lets an operator advance a virtual job and confirm partial quality', async () => {
+    api.advanceWorkflow.mockResolvedValue({});
+    api.getOrder.mockResolvedValue({ id: 11, order_number: 'PO-11', product_id: 1, quantity: 3, priority: 0, status: 'planned', product_snapshot: { name: '质检产品' }, operations: [], requirements: [{ id: 8, component_id: null, unit_quantity: 1, status: 'in_progress', component_snapshot: { name: '产品' }, recipe_snapshot: { name: '源文件' }, ledger: { planned: 3, reserved: 3, good: 0, scrap: 0, remaining: 0 }, plate_jobs: [{ id: 17, requirement_id: 8, printer_profile_id: 3, virtual_printer_id: 2, virtual_printer_name: '阶段11虚拟打印机', planned_quantity: 3, status: 'waiting_cleanup', workflow_status: 'awaiting_quality', slice_status: 'succeeded', slice_attempts: 1, created_at: '', updated_at: '' }] }] });
+    wrapper('/production-orders/11');
+    expect((await screen.findAllByText('待质检')).length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText('任务 17 合格数量'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: '确认部分合格' }));
+    await waitFor(() => expect(api.advanceWorkflow).toHaveBeenCalledWith(17, 'quality', { good_quantity: 2 }));
   });
 });

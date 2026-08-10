@@ -9,7 +9,13 @@ from sqlalchemy import MetaData, event, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import backend.app.models  # noqa: F401
-from backend.app.core.database import Base, ensure_production_schema, ensure_stage7_columns, ensure_stage8_columns
+from backend.app.core.database import (
+    Base,
+    ensure_production_schema,
+    ensure_stage7_columns,
+    ensure_stage8_columns,
+    ensure_stage11_columns,
+)
 from backend.app.models.production import PRODUCTION_TABLE_NAMES
 
 
@@ -135,4 +141,39 @@ async def test_sqlite_stage7_to_stage8_columns_preserve_rows_and_repeat(tmp_path
 
     assert order == ("KEEP-8", None)
     assert {"component_id", "unit_quantity", "component_snapshot", "recipe_snapshot"} <= requirement_columns
+    await engine.dispose()
+
+
+async def test_sqlite_stage10_to_stage11_columns_preserve_jobs_and_repeat(tmp_path: Path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stage10-to-11.db'}")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE plate_jobs (id INTEGER PRIMARY KEY, planned_quantity INTEGER NOT NULL, "
+                "status VARCHAR(30) NOT NULL)"
+            )
+        )
+        await conn.execute(text("INSERT INTO plate_jobs VALUES (1, 3, 'assigned')"))
+        await ensure_stage11_columns(conn)
+        await ensure_stage11_columns(conn)
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT planned_quantity, status, quality_good_quantity, cleanup_confirmed_at "
+                    "FROM plate_jobs WHERE id = 1"
+                )
+            )
+        ).one()
+        columns = {column[1] for column in (await conn.execute(text("PRAGMA table_info(plate_jobs)"))).all()}
+
+    assert row == (3, "assigned", None, None)
+    assert {
+        "machine_result",
+        "quality_good_quantity",
+        "quality_scrap_quantity",
+        "print_started_at",
+        "print_finished_at",
+        "quality_confirmed_at",
+        "cleanup_confirmed_at",
+    } <= columns
     await engine.dispose()

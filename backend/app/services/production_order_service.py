@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import delete as sql_delete, select, update
+from sqlalchemy import delete as sql_delete, exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -386,6 +386,12 @@ async def change_order_status(
     except ValueError as exc:
         raise ProductionOrderError("当前订单状态不允许执行这个操作") from exc
     if action == "cancel":
+        if any(
+            job.status in {PlateJobStatus.PRINTING.value, PlateJobStatus.WAITING_CLEANUP.value}
+            for requirement in order.requirements
+            for job in requirement.plate_jobs
+        ):
+            raise ProductionOrderError("订单中有正在打印或等待质检/清板的任务，不能直接取消")
         queue_item_ids: list[int] = []
         for requirement in order.requirements:
             requirement.status = RequirementStatus.CANCELLED.value
@@ -442,6 +448,8 @@ async def cancel_plate_job(db: AsyncSession, plate_job_id: int) -> PlateJob:
         raise ProductionOrderError("打印任务不存在")
     if job.status == PlateJobStatus.COMPLETED.value:
         raise ProductionOrderError("已完成的打印任务不能取消")
+    if job.status in {PlateJobStatus.PRINTING.value, PlateJobStatus.WAITING_CLEANUP.value}:
+        raise ProductionOrderError("打印中或等待质检/清板的任务不能取消")
     if job.status == PlateJobStatus.CANCELLED.value:
         return job
     if job.queue_item_id is not None:
@@ -483,8 +491,12 @@ async def delete_plate_job(db: AsyncSession, plate_job_id: int) -> None:
     if job is None:
         raise ProductionOrderError("打印任务不存在")
     queue_item = await db.get(PrintQueueItem, job.queue_item_id) if job.queue_item_id is not None else None
-    if job.status == PlateJobStatus.PRINTING.value or (queue_item and queue_item.status == "printing"):
-        raise ProductionOrderError("打印机正在执行此任务，不能删除")
+    if job.status in {
+        PlateJobStatus.PRINTING.value,
+        PlateJobStatus.WAITING_CLEANUP.value,
+        PlateJobStatus.COMPLETED.value,
+    } or (queue_item and queue_item.status == "printing"):
+        raise ProductionOrderError("已开始执行或已完成的任务必须保留，不能删除")
     if queue_item and queue_item.status == "pending":
         queue_item.status = "cancelled"
         queue_item.completed_at = datetime.utcnow()
@@ -499,6 +511,12 @@ async def delete_order(db: AsyncSession, order_id: int) -> None:
     order = await _load_order(db, order_id)
     if order is None:
         raise ProductionOrderError("生产订单不存在")
+    if any(
+        job.print_started_at is not None or job.status == PlateJobStatus.COMPLETED.value
+        for requirement in order.requirements
+        for job in requirement.plate_jobs
+    ):
+        raise ProductionOrderError("订单已有执行记录，必须保留审计历史，不能删除")
     queue_ids = [job.queue_item_id for req in order.requirements for job in req.plate_jobs if job.queue_item_id]
     if queue_ids:
         queue_rows = list((await db.execute(select(PrintQueueItem).where(PrintQueueItem.id.in_(queue_ids)))).scalars())
@@ -516,6 +534,178 @@ async def delete_order(db: AsyncSession, order_id: int) -> None:
     )
     await db.delete(order)
     await db.commit()
+
+
+_WORKFLOW_LOG = {
+    "prepare": "production_plate_job_prepared",
+    "start": "production_plate_job_started",
+    "finish": "production_plate_job_print_finished",
+    "quality": "production_plate_job_quality_confirmed",
+    "cleanup": "production_plate_job_cleanup_confirmed",
+}
+
+
+async def _refresh_order_completion(db: AsyncSession, order_id: int) -> None:
+    order = await _load_order(db, order_id)
+    if order is None or order.status in {OrderStatus.CANCELLED.value, OrderStatus.COMPLETED.value}:
+        return
+    if not order.requirements or any(
+        requirement.good_quantity < requirement.required_quantity
+        for requirement in order.requirements
+    ):
+        return
+    active = await db.scalar(
+        select(
+            exists().where(
+                ProductionRequirement.order_id == order_id,
+                PlateJob.requirement_id == ProductionRequirement.id,
+                PlateJob.status.not_in(
+                    (PlateJobStatus.COMPLETED.value, PlateJobStatus.CANCELLED.value)
+                ),
+            )
+        )
+    )
+    if not active:
+        order.status = OrderStatus.COMPLETED.value
+
+
+async def advance_virtual_plate_job(
+    db: AsyncSession,
+    *,
+    plate_job_id: int,
+    operation_id: str,
+    action: str,
+    actor_user_id: int | None,
+    machine_result: str | None = None,
+    good_quantity: int | None = None,
+) -> tuple[PlateJob, bool]:
+    """Advance one Stage 11 virtual job without contacting printer services."""
+
+    operation_type = _WORKFLOW_LOG.get(action)
+    if operation_type is None:
+        raise ProductionOrderError("不支持的虚拟打印操作")
+    replay = await _operation(db, operation_id)
+    if replay:
+        payload = replay.payload or {}
+        if replay.operation_type != operation_type or payload.get("plate_job_id") != plate_job_id:
+            raise ProductionOrderError("该操作编号已经用于其他操作")
+        existing = await db.get(PlateJob, plate_job_id)
+        if existing is None:
+            raise ProductionOrderError("打印任务不存在")
+        return existing, True
+
+    job = (
+        await db.execute(
+            select(PlateJob)
+            .where(PlateJob.id == plate_job_id)
+            .options(
+                selectinload(PlateJob.requirement).selectinload(ProductionRequirement.order),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise ProductionOrderError("打印任务不存在")
+    if job.virtual_printer_id is None:
+        raise ProductionOrderError("阶段11只允许操作虚拟打印机任务")
+
+    now = datetime.utcnow()
+    payload: dict = {"plate_job_id": job.id, "action": action, "simulation_only": True}
+    if action == "prepare":
+        if job.status != PlateJobStatus.ASSIGNED.value:
+            raise ProductionOrderError("只有已分配任务可以进入待打印")
+        job.status = PlateJobStatus.READY.value
+    elif action == "start":
+        if job.status != PlateJobStatus.READY.value:
+            raise ProductionOrderError("只有待打印任务可以开始虚拟打印")
+        job.status = PlateJobStatus.PRINTING.value
+        job.print_started_at = now
+    elif action == "finish":
+        if job.status != PlateJobStatus.PRINTING.value:
+            raise ProductionOrderError("只有打印中的任务可以结束虚拟打印")
+        if machine_result not in {"completed", "failed"}:
+            raise ProductionOrderError("必须说明虚拟打印机报告成功还是失败")
+        job.status = PlateJobStatus.WAITING_CLEANUP.value
+        job.machine_result = machine_result
+        job.print_finished_at = now
+        payload["machine_result"] = machine_result
+    elif action == "quality":
+        if job.status != PlateJobStatus.WAITING_CLEANUP.value or job.quality_confirmed_at is not None:
+            raise ProductionOrderError("当前任务不在等待质检状态")
+        if good_quantity is None or good_quantity < 0 or good_quantity > job.planned_quantity:
+            raise ProductionOrderError("合格数量必须在零到本盘计划数量之间")
+        scrap_quantity = job.planned_quantity - good_quantity
+        job.quality_good_quantity = good_quantity
+        job.quality_scrap_quantity = scrap_quantity
+        job.quality_confirmed_at = now
+        requirement = job.requirement
+        file_snapshot = (requirement.recipe_snapshot or {}).get("product_file_snapshot") or {}
+        is_multi_plate = (
+            file_snapshot.get("production_mode") == "multi_plate"
+            and int(file_snapshot.get("source_plate_count", 1) or 1) > 1
+            and job.product_set_index > 0
+        )
+        if is_multi_plate:
+            siblings = list(
+                (
+                    await db.execute(
+                        select(PlateJob).where(
+                            PlateJob.requirement_id == requirement.id,
+                            PlateJob.product_set_index == job.product_set_index,
+                            PlateJob.status != PlateJobStatus.CANCELLED.value,
+                        )
+                    )
+                ).scalars()
+            )
+            if all(row.quality_confirmed_at is not None for row in siblings):
+                requirement.reserved_quantity = max(0, requirement.reserved_quantity - 1)
+                if all((row.quality_good_quantity or 0) >= row.planned_quantity for row in siblings):
+                    requirement.good_quantity += 1
+                else:
+                    requirement.scrap_quantity += 1
+        else:
+            requirement.reserved_quantity = max(0, requirement.reserved_quantity - job.planned_quantity)
+            requirement.good_quantity += good_quantity
+            requirement.scrap_quantity += scrap_quantity
+        requirement.status = (
+            RequirementStatus.COMPLETED.value
+            if requirement.good_quantity >= requirement.required_quantity
+            else RequirementStatus.IN_PROGRESS.value
+            if requirement.reserved_quantity > 0
+            else RequirementStatus.PENDING.value
+        )
+        payload.update({"good_quantity": good_quantity, "scrap_quantity": scrap_quantity})
+    elif action == "cleanup":
+        if job.status != PlateJobStatus.WAITING_CLEANUP.value or job.quality_confirmed_at is None:
+            raise ProductionOrderError("必须先完成质检才能确认清板")
+        job.status = PlateJobStatus.COMPLETED.value
+        job.cleanup_confirmed_at = now
+
+    db.add(
+        OperationLog(
+            operation_id=operation_id,
+            operation_type=operation_type,
+            entity_type="production_order",
+            entity_id=job.requirement.order_id,
+            actor_user_id=actor_user_id,
+            payload=payload,
+        )
+    )
+    if action == "cleanup":
+        await db.flush()
+        await _refresh_order_completion(db, job.requirement.order_id)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        replay = await _operation(db, operation_id)
+        if replay:
+            existing = await db.get(PlateJob, plate_job_id)
+            if existing:
+                return existing, True
+        raise
+    await db.refresh(job)
+    return job, False
 
 
 async def preview_plate_jobs(db: AsyncSession, order_id: int) -> tuple[ProductionOrder, list[dict]]:
@@ -593,10 +783,19 @@ async def confirm_plate_jobs(
         if strategy == "multi_plate_fixed":
             if source_plate_count < 2:
                 raise ProductionOrderError("多盘固定源文件缺少有效的源盘数量")
+            max_set_index = (
+                await db.execute(
+                    select(func.max(PlateJob.product_set_index)).where(
+                        PlateJob.requirement_id == requirement.id
+                    )
+                )
+            ).scalar_one_or_none()
+            next_set_index = int(max_set_index or 0) + 1
             # One product set is one copy of every source plate.  Expand the
             # physical work items while reserving the product quantity only
             # once in the requirement ledger.
-            for product_set_index in range(1, item.planned_quantity + 1):
+            for offset in range(item.planned_quantity):
+                product_set_index = next_set_index + offset
                 for source_plate_index in range(source_plate_count):
                     job = PlateJob(
                         requirement_id=requirement.id,
@@ -711,6 +910,7 @@ async def order_detail(db: AsyncSession, order_id: int) -> dict:
                             for key, value in job.__dict__.items()
                             if not key.startswith("_")
                         },
+                        "workflow_status": job.workflow_status,
                         "printer_profile_name": profiles[job.printer_profile_id].name
                         if job.printer_profile_id in profiles
                         else None,

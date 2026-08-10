@@ -319,6 +319,18 @@ async def ensure_stage10_slice_artifacts(conn):
     )
 
 
+async def ensure_stage11_columns(conn):
+    """Add idempotent virtual quality-loop facts without printer transport."""
+
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN machine_result VARCHAR(20)")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN quality_good_quantity INTEGER")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN quality_scrap_quantity INTEGER")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN print_started_at DATETIME")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN print_finished_at DATETIME")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN quality_confirmed_at DATETIME")
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN cleanup_confirmed_at DATETIME")
+
+
 async def init_db():
     # Import models to register them with SQLAlchemy
     from backend.app.models import (  # noqa: F401
@@ -842,6 +854,7 @@ async def run_migrations(conn):
     await ensure_stage8_columns(conn)
     await ensure_stage9_columns(conn)
     await ensure_stage10_slice_artifacts(conn)
+    await ensure_stage11_columns(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

@@ -16,7 +16,7 @@ from backend.app.models.material_type import MaterialType
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.printer_profile import PrinterProfile
-from backend.app.models.production import PlateJob
+from backend.app.models.production import PlateJob, PlateJobStatus
 from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.services.production_printer_capabilities import (
     capabilities_from_rows,
@@ -24,6 +24,12 @@ from backend.app.services.production_printer_capabilities import (
 )
 
 ACTIVE_QUEUE_STATUSES = ("pending", "printing")
+ACTIVE_VIRTUAL_JOB_STATUSES = (
+    PlateJobStatus.ASSIGNED.value,
+    PlateJobStatus.READY.value,
+    PlateJobStatus.PRINTING.value,
+    PlateJobStatus.WAITING_CLEANUP.value,
+)
 
 
 def _is_a1_class(model: str | None) -> bool:
@@ -120,6 +126,16 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
         virtual_query = select(VirtualPrinter).where(VirtualPrinter.model.in_([code for code, name in virtual_model_names.items() if name == candidate_profile.printer_model]))
         virtual_candidates = list((await db.execute(virtual_query.order_by(VirtualPrinter.id))).scalars().all())
         for virtual in virtual_candidates:
+            virtual_busy = await db.scalar(
+                select(
+                    exists().where(
+                        PlateJob.virtual_printer_id == virtual.id,
+                        PlateJob.status.in_(ACTIVE_VIRTUAL_JOB_STATUSES),
+                    )
+                )
+            )
+            if virtual_busy:
+                continue
             capability_result = match_filament_requirements(
                 filament_requirements,
                 capabilities_from_rows(

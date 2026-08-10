@@ -194,6 +194,14 @@ class PlateJobResponse(_FromAttributes):
     queue_status: str | None = None
     planned_quantity: int
     status: str
+    workflow_status: str
+    machine_result: str | None = None
+    quality_good_quantity: int | None = None
+    quality_scrap_quantity: int | None = None
+    print_started_at: datetime | None = None
+    print_finished_at: datetime | None = None
+    quality_confirmed_at: datetime | None = None
+    cleanup_confirmed_at: datetime | None = None
     slice_status: str
     slice_attempts: int
     slice_error: str | None
@@ -303,6 +311,14 @@ class PlateJobConfirmRequest(BaseModel):
 class PlateJobConfirmResponse(BaseModel):
     order_id: int
     items: list[PlateJobResponse]
+
+
+class PlateJobWorkflowAction(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=100)
+    machine_result: Literal["completed", "failed"] | None = None
+    good_quantity: int | None = Field(default=None, ge=0)
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
 
 
 class ProductionRequirementDetail(ProductionRequirementResponse):

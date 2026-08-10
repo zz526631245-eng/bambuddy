@@ -6,7 +6,10 @@ export interface QuantityLedger {
 export interface PlateJob {
   id:number; requirement_id:number; printer_profile_id?:number|null; virtual_printer_id?:number|null; queue_item_id?:number|null;
   printer_profile_name?:string|null; printer_model?:string|null; virtual_printer_name?:string|null; queue_status?:string|null;
-  planned_quantity:number; status:string; slice_status:string; slice_attempts:number; slice_error?:string|null;
+  planned_quantity:number; status:string; workflow_status?:string; machine_result?:'completed'|'failed'|null;
+  quality_good_quantity?:number|null; quality_scrap_quantity?:number|null;
+  print_started_at?:string|null; print_finished_at?:string|null; quality_confirmed_at?:string|null; cleanup_confirmed_at?:string|null;
+  slice_status:string; slice_attempts:number; slice_error?:string|null;
   slice_result?:Record<string,unknown>|null; sliced_at?:string|null; created_at:string; updated_at:string;
 }
 export interface ProductionRequirement {
@@ -65,6 +68,8 @@ export const productionApi={
   retrySlice:(plateJobId:number)=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/slice`,{method:'POST'}),
   cancelPlateJob:(plateJobId:number)=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/cancel`,{method:'POST'}),
   deletePlateJob:(plateJobId:number)=>request<void>(`/production/plate-jobs/${plateJobId}`,{method:'DELETE'}),
+  advanceWorkflow:(plateJobId:number,action:'prepare'|'start'|'finish'|'quality'|'cleanup',data?:{machine_result?:'completed'|'failed';good_quantity?:number})=>
+    request<PlateJob>(`/production/plate-jobs/${plateJobId}/workflow/${action}`,{method:'POST',body:JSON.stringify({operation_id:operationId(`plate-${action}`),...(data ?? {})})}),
   realSlice:(plateJobId:number,data?:{target_printer_preset?:string;target_printer_model?:string})=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/real-slice`,{method:'POST',body:JSON.stringify(data ?? {})}),
   listSliceArtifacts:()=>request<SliceArtifact[]>('/production/slice-artifacts'),
   downloadSliceArtifact: async (artifactId:number):Promise<void> => {

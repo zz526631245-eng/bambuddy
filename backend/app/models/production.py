@@ -177,6 +177,17 @@ class PlateJob(Base):
     slice_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     slice_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     sliced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Stage 11 virtual workflow facts.  ``waiting_cleanup`` is intentionally
+    # reused for both review phases to keep old SQLite status constraints
+    # compatible: a missing quality timestamp means "awaiting quality" and a
+    # present timestamp means "waiting for plate cleanup".
+    machine_result: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    quality_good_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_scrap_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    print_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    print_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    quality_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cleanup_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -194,6 +205,12 @@ class PlateJob(Base):
     # set and source-plate role.  Single-plate jobs keep the default values.
     source_plate_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     product_set_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    @property
+    def workflow_status(self) -> str:
+        if self.status == PlateJobStatus.WAITING_CLEANUP.value:
+            return "waiting_cleanup" if self.quality_confirmed_at else "awaiting_quality"
+        return self.status
 
 
 if TYPE_CHECKING:

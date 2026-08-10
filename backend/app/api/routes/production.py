@@ -34,6 +34,7 @@ from backend.app.schemas.production import (
     PlateJobConfirmResponse,
     PlateJobPreviewResponse,
     PlateJobResponse,
+    PlateJobWorkflowAction,
     PrinterProfileCreate,
     PrinterProfileResponse,
     ProductionOrderCancelAction,
@@ -52,6 +53,7 @@ from backend.app.schemas.production import (
 from backend.app.services.production_allocator import allocate_plate_jobs
 from backend.app.services.production_order_service import (
     ProductionOrderError,
+    advance_virtual_plate_job,
     cancel_plate_job,
     change_order_status,
     confirm_plate_jobs,
@@ -564,6 +566,33 @@ async def delete_plate_job_route(
         await delete_plate_job(db, plate_job_id)
     except ProductionOrderError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/plate-jobs/{plate_job_id}/workflow/{action}", response_model=PlateJobResponse)
+async def advance_virtual_plate_job_route(
+    plate_job_id: int,
+    action: str,
+    payload: PlateJobWorkflowAction,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
+):
+    """Advance the Stage 11 simulation; never call printer transport."""
+
+    try:
+        job, replayed = await advance_virtual_plate_job(
+            db,
+            plate_job_id=plate_job_id,
+            operation_id=payload.operation_id,
+            action=action,
+            actor_user_id=current_user.id if current_user else None,
+            machine_result=payload.machine_result,
+            good_quantity=payload.good_quantity,
+        )
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    response.headers["X-Idempotent-Replay"] = "true" if replayed else "false"
+    return job
 
 
 @router.get("/requirements", response_model=list[ProductionRequirementResponse])

@@ -10,6 +10,23 @@ python -m pytest backend/tests/integration/test_stage9_production_allocation.py 
 
 预期：5 项通过，覆盖确认后自动分配、队列安全暂停、并发不重复、取消释放、重启恢复和兼容方案回退。
 
+## 阶段 11 虚拟质检闭环
+
+```powershell
+python -m pytest backend/tests/integration/test_stage11_quality_loop.py -q
+```
+
+预期：6 项通过，覆盖六阶段虚拟状态流转、部分成功、全部失败、幂等质检、执行历史保护、清板后释放虚拟打印机、多盘整套结算和失败补产套次编号。
+
+前端人工操作定向测试：
+
+```powershell
+Set-Location frontend
+npm.cmd test -- --run src/__tests__/pages/Stage8ProductionOrders.test.tsx
+```
+
+预期：7 项通过。
+
 ## 阶段 8 后端定向测试
 
 ```powershell
