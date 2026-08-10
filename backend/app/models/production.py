@@ -65,6 +65,7 @@ PRODUCTION_TABLE_NAMES = {
     "production_recipe_profiles",
     "material_type_spool_mappings",
     "slice_artifacts",
+    "production_printer_status",
 }
 
 

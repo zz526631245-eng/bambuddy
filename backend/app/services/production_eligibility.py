@@ -1,7 +1,8 @@
-"""Stage 9 production eligibility without printer communication.
+"""Stage 9/13 production eligibility without printer communication.
 
-The allocator deliberately uses persisted configuration only.  It does not
-read MQTT state, connect to a printer, or invoke any print command.
+The allocator uses persisted configuration plus the normalized Stage 13
+heartbeat snapshot. It does not read MQTT state, connect to a printer, or
+invoke any print command.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from backend.app.services.production_printer_capabilities import (
     capabilities_from_rows,
     match_filament_requirements,
 )
+from backend.app.services.production_printer_status import availability
 
 ACTIVE_QUEUE_STATUSES = ("pending", "printing")
 ACTIVE_VIRTUAL_JOB_STATUSES = (
@@ -126,6 +128,8 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
         virtual_query = select(VirtualPrinter).where(VirtualPrinter.model.in_([code for code, name in virtual_model_names.items() if name == candidate_profile.printer_model]))
         virtual_candidates = list((await db.execute(virtual_query.order_by(VirtualPrinter.id))).scalars().all())
         for virtual in virtual_candidates:
+            if not await availability(db, "virtual_printer", virtual.id):
+                continue
             virtual_busy = await db.scalar(
                 select(
                     exists().where(
@@ -164,6 +168,8 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
             query = query.with_for_update(skip_locked=True, of=Printer)
         candidate_printers = list((await db.execute(query)).scalars().all())
         for candidate_printer in candidate_printers:
+            if not await availability(db, "printer", candidate_printer.id):
+                continue
             capability_result = match_filament_requirements(
                 filament_requirements,
                 capabilities_from_rows(

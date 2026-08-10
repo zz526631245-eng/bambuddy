@@ -19,6 +19,7 @@ from backend.app.models.operation_log import OperationLog
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.production import OrderStatus, PlateJob, PlateJobStatus, ProductionRequirement
 from backend.app.services.production_eligibility import find_assignment
+from backend.app.services.production_printer_status import availability
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,54 @@ _sqlite_allocator_lock = asyncio.Lock()
 _sqlite_limit_logged = False
 
 
+async def _requeue_unavailable_assignments(db: AsyncSession) -> int:
+    """Release stage-9 assignments whose Stage 13 target became unavailable.
+
+    Only pending production holds are requeued.  A printing/real queue item is
+    never silently altered; Stage 11/14 workflow controls that state.
+    """
+
+    query = (
+        select(PlateJob)
+        .where(PlateJob.status == PlateJobStatus.ASSIGNED.value)
+        .options(selectinload(PlateJob.requirement), selectinload(PlateJob.queue_item))
+        .order_by(PlateJob.id)
+    )
+    jobs = list((await db.execute(query)).scalars().unique())
+    requeued = 0
+    for job in jobs:
+        target_type: str | None = None
+        target_id: int | None = None
+        if job.virtual_printer_id is not None:
+            target_type, target_id = "virtual_printer", job.virtual_printer_id
+        elif job.queue_item and job.queue_item.printer_id is not None and job.queue_item.status == "pending":
+            target_type, target_id = "printer", job.queue_item.printer_id
+        if target_type is None or target_id is None or await availability(db, target_type, target_id):
+            continue
+
+        if job.queue_item is not None and job.queue_item.status == "pending":
+            job.queue_item.status = "cancelled"
+            job.queue_item.error_message = "阶段13：打印机不可用，已重新排队"
+            job.queue_item_id = None
+        job.virtual_printer_id = None
+        job.status = PlateJobStatus.DRAFT.value
+        db.add(
+            OperationLog(
+                operation_id=f"stage13-requeue-plate-job-{job.id}",
+                operation_type="stage13_printer_unavailable_requeued",
+                entity_type="production_order",
+                entity_id=job.requirement.order_id,
+                payload={"plate_job_id": job.id, "target_type": target_type, "target_id": target_id},
+            )
+        )
+        requeued += 1
+    if requeued:
+        await db.commit()
+    return requeued
+
+
 async def _allocate(db: AsyncSession, plate_job_ids: Sequence[int] | None, limit: int) -> list[PlateJob]:
+    await _requeue_unavailable_assignments(db)
     query = (
         select(PlateJob)
         .join(PlateJob.requirement)

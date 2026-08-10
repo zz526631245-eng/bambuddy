@@ -15,6 +15,7 @@ export default {
     printerProfiles: 'Printer Profiles',
     printerConsumables: 'Direct Consumables',
     consumableLibrary: 'Consumable Library',
+    productionPrinterStatus: 'Production Printer Status',
     inventory: 'Filament',
     files: 'File Manager',
     makerworld: 'MakerWorld',

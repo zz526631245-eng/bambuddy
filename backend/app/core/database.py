@@ -185,6 +185,7 @@ async def ensure_production_schema(conn):
         production,
         production_consumable_unit,
         production_printer_consumable,
+        production_printer_status,
         production_recipe,
     )
 
@@ -350,6 +351,50 @@ async def ensure_stage12_columns(conn):
         conn,
         "CREATE INDEX IF NOT EXISTS ix_production_printer_consumables_consumable_unit_id "
         "ON production_printer_consumables (consumable_unit_id)",
+    )
+
+
+async def ensure_stage13_printer_status(conn):
+    """Create the normalized printer heartbeat snapshot used by Stage 13.
+
+    The table is deliberately independent from the core printer transport
+    tables.  It can receive a future real-printer adapter without changing
+    the existing MQTT lifecycle, while the current stage uses simulated
+    heartbeats only.
+    """
+
+    id_type = "SERIAL" if conn.dialect.name == "postgresql" else "INTEGER"
+    timestamp_type = "TIMESTAMP" if conn.dialect.name == "postgresql" else "DATETIME"
+    await _safe_execute(
+        conn,
+        f"""CREATE TABLE IF NOT EXISTS production_printer_status (
+            id {id_type} PRIMARY KEY,
+            target_key VARCHAR(64) NOT NULL UNIQUE,
+            target_type VARCHAR(20) NOT NULL,
+            target_id INTEGER NOT NULL,
+            state VARCHAR(30) NOT NULL DEFAULT 'unknown',
+            source VARCHAR(30) NOT NULL DEFAULT 'stage13_simulation',
+            last_heartbeat_at {timestamp_type},
+            observed_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            current_job_id INTEGER,
+            current_job_state VARCHAR(30),
+            fault_code VARCHAR(100),
+            fault_message VARCHAR(500),
+            loaded_filaments JSON NOT NULL DEFAULT '[]',
+            telemetry JSON NOT NULL DEFAULT '{{}}',
+            created_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_printer_status_heartbeat "
+        "ON production_printer_status (last_heartbeat_at)",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_printer_status_target "
+        "ON production_printer_status (target_type, target_id)",
     )
 
 
@@ -878,6 +923,7 @@ async def run_migrations(conn):
     await ensure_stage10_slice_artifacts(conn)
     await ensure_stage11_columns(conn)
     await ensure_stage12_columns(conn)
+    await ensure_stage13_printer_status(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

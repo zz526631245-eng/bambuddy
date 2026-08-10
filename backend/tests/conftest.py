@@ -140,6 +140,7 @@ async def test_engine():
         production,
         production_consumable_unit,
         production_printer_consumable,
+        production_printer_status,
         production_recipe,
         project,
         project_bom,

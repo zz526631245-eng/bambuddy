@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Printer, Archive, ListOrdered, BarChart3, Cloud, Settings, Sun, Moon, Monitor, ChevronLeft, ChevronRight, Keyboard, Github, ArrowUpCircle, Wrench, FolderKanban, FolderOpen, X, Menu, Info, Plug, Bug, LogOut, Key, Loader2, Disc3, ShieldAlert, Globe, Bell, Package, Layers3, SlidersHorizontal, ClipboardList, LibraryBig, ScanLine, type LucideIcon } from 'lucide-react';
+import { Printer, Archive, ListOrdered, BarChart3, Cloud, Settings, Sun, Moon, Monitor, ChevronLeft, ChevronRight, Keyboard, Github, ArrowUpCircle, Wrench, FolderKanban, FolderOpen, X, Menu, Info, Plug, Bug, LogOut, Key, Loader2, Disc3, ShieldAlert, Globe, Bell, Package, Layers3, SlidersHorizontal, ClipboardList, LibraryBig, ScanLine, Activity, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
@@ -48,6 +48,7 @@ export const defaultNavItems: NavItem[] = [
   { id: 'slice-library', to: '/slice-library', icon: LibraryBig, labelKey: 'nav.sliceLibrary' },
   { id: 'printer-consumables', to: '/printer-consumables', icon: ScanLine, labelKey: 'nav.printerConsumables' },
   { id: 'consumable-library', to: '/consumable-library', icon: Package, labelKey: 'nav.consumableLibrary' },
+  { id: 'production-printer-status', to: '/production-printer-status', icon: Activity, labelKey: 'nav.productionPrinterStatus' },
   { id: 'material-types', to: '/material-types', icon: Layers3, labelKey: 'nav.materialTypes' },
   { id: 'printer-profiles', to: '/printer-profiles', icon: SlidersHorizontal, labelKey: 'nav.printerProfiles' },
   { id: 'files', to: '/files', icon: FolderOpen, labelKey: 'nav.files' },
@@ -310,6 +311,7 @@ export function Layout() {
       'printer-profiles': 'printer_profiles:read',
       'printer-consumables': 'plate_jobs:read',
       'consumable-library': 'plate_jobs:read',
+      'production-printer-status': 'plate_jobs:read',
       inventory: 'inventory:read',
       files: ['library:read', 'library:read_own', 'library:read_all'],
       makerworld: 'makerworld:view',

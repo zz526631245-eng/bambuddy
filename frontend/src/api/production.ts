@@ -58,6 +58,16 @@ export interface ConsumableUnit {
   received_at?:string|null; depleted_at?:string|null; scrapped_at?:string|null; replayed?:boolean;
 }
 export interface ConsumableSummary { generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; }
+export type ProductionPrinterState = 'unknown'|'idle'|'printing'|'paused'|'finished'|'offline'|'error'|'maintenance';
+export interface ProductionPrinterStatus {
+  id?:number|null; target_key:string; target_type:'printer'|'virtual_printer'; target_id:number;
+  name:string; model?:string|null; state:ProductionPrinterState; effective_state:ProductionPrinterState;
+  available_for_allocation:boolean; stale:boolean; source:string; last_heartbeat_at?:string|null;
+  observed_at?:string|null; seconds_since_heartbeat?:number|null; current_job_id?:number|null;
+  current_job_state?:string|null; fault_code?:string|null; fault_message?:string|null;
+  loaded_filaments:Array<Record<string,unknown>>; telemetry:Record<string,unknown>;
+  heartbeat_timeout_seconds:number; transport_enabled:boolean; replayed?:boolean;
+}
 export interface PlateJobPreviewItem {
   requirement_id:number; printer_profile_id?:number|null; planned_quantity:number;
   component_name:string; print_plan_name:string;
@@ -98,6 +108,9 @@ export const productionApi={
     request<{batch_id:string;items:ConsumableUnit[]}>('/production/consumable-library/batches',{method:'POST',body:JSON.stringify(data)}),
   scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:'receive'|'deplete'|'scrap';remaining_weight_g?:number;storage_location?:string|null})=>
     request<ConsumableUnit>('/production/consumable-library/scan',{method:'POST',body:JSON.stringify(data)}),
+  listPrinterStatuses:()=>request<ProductionPrinterStatus[]>('/production/printer-status'),
+  heartbeatPrinter:(data:{operation_id:string;target_type:'printer'|'virtual_printer';target_id:number;state:ProductionPrinterState;source?:'stage13_simulation'|'adapter';current_job_id?:number|null;current_job_state?:string|null;fault_code?:string|null;fault_message?:string|null;loaded_filaments?:Array<Record<string,unknown>>;telemetry?:Record<string,unknown>})=>
+    request<ProductionPrinterStatus>('/production/printer-status/heartbeat',{method:'POST',body:JSON.stringify(data)}),
   downloadSliceArtifact: async (artifactId:number):Promise<void> => {
     const headers:Record<string,string> = {};
     const token = getAuthToken(); if (token) headers.Authorization = `Bearer ${token}`;

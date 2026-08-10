@@ -174,6 +174,53 @@ class ConsumableLibrarySummary(BaseModel):
     total: int
 
 
+PRINTER_STATUS_STATES = Literal["unknown", "idle", "printing", "paused", "finished", "offline", "error", "maintenance"]
+
+
+class PrinterStatusHeartbeat(BaseModel):
+    """Normalized telemetry accepted by the Stage 13 status adapter seam."""
+
+    operation_id: str = Field(min_length=1, max_length=100)
+    target_type: Literal["printer", "virtual_printer"]
+    target_id: int = Field(gt=0)
+    state: PRINTER_STATUS_STATES = "idle"
+    source: Literal["stage13_simulation", "adapter"] = "stage13_simulation"
+    current_job_id: int | None = Field(default=None, gt=0)
+    current_job_state: str | None = Field(default=None, max_length=30)
+    fault_code: str | None = Field(default=None, max_length=100)
+    fault_message: str | None = Field(default=None, max_length=500)
+    loaded_filaments: list[dict] = Field(default_factory=list)
+    telemetry: dict = Field(default_factory=dict)
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
+
+
+class ProductionPrinterStatusResponse(_FromAttributes):
+    id: int | None = None
+    target_key: str
+    target_type: Literal["printer", "virtual_printer"]
+    target_id: int
+    name: str
+    model: str | None = None
+    state: str
+    effective_state: str
+    available_for_allocation: bool
+    stale: bool
+    source: str
+    last_heartbeat_at: datetime | None = None
+    observed_at: datetime | None = None
+    seconds_since_heartbeat: int | None = None
+    current_job_id: int | None = None
+    current_job_state: str | None = None
+    fault_code: str | None = None
+    fault_message: str | None = None
+    loaded_filaments: list[dict] = Field(default_factory=list)
+    telemetry: dict = Field(default_factory=dict)
+    heartbeat_timeout_seconds: int
+    transport_enabled: bool = False
+    replayed: bool = False
+
+
 class PrinterProfileCreate(BaseModel):
     code: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=255)

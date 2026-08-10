@@ -48,12 +48,14 @@ from backend.app.schemas.production import (
     PrinterConsumableTarget,
     PrinterProfileCreate,
     PrinterProfileResponse,
+    PrinterStatusHeartbeat,
     ProductionOrderCancelAction,
     ProductionOrderCreate,
     ProductionOrderDetail,
     ProductionOrderResponse,
     ProductionOrderStatusAction,
     ProductionOrderUpdate,
+    ProductionPrinterStatusResponse,
     ProductionRecipeCreate,
     ProductionRecipeResponse,
     ProductionRequirementResponse,
@@ -84,6 +86,10 @@ from backend.app.services.production_order_service import (
     product_order_summaries,
     update_order as update_production_order,
 )
+from backend.app.services.production_printer_status import (
+    heartbeat as record_printer_heartbeat,
+    list_statuses as list_printer_statuses,
+)
 from backend.app.services.production_slicer import (
     SlicePlanningError,
     _absolute_library_path,
@@ -92,6 +98,34 @@ from backend.app.services.production_slicer import (
 )
 
 router = APIRouter(prefix="/production", tags=["production"])
+
+
+@router.get("/printer-status", response_model=list[ProductionPrinterStatusResponse])
+async def get_production_printer_status(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    """List normalized printer status snapshots and heartbeat freshness."""
+
+    return await list_printer_statuses(db)
+
+
+@router.post("/printer-status/heartbeat", response_model=ProductionPrinterStatusResponse)
+async def post_production_printer_heartbeat(
+    payload: PrinterStatusHeartbeat,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
+):
+    """Record a Stage 13 simulation heartbeat for a printer target.
+
+    This endpoint is the future real-adapter seam. Stage 13 does not open a
+    device connection; the UI and tests send simulated telemetry here.
+    """
+
+    try:
+        return await record_printer_heartbeat(db, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/consumable-library", response_model=list[ConsumableUnitResponse])

@@ -15,6 +15,7 @@ export default {
     printerProfiles: '打印配置组',
     printerConsumables: '直供耗材',
     consumableLibrary: '耗材库',
+    productionPrinterStatus: '打印机状态监控',
     inventory: '耗材',
     files: '文件管理器',
     makerworld: 'MakerWorld',
