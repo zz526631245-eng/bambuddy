@@ -18,6 +18,7 @@
 
 ## 后续修复：真实打印机耗材二维码
 
+- 修复提交：`c48d6fa fix(stage12): add real printer consumable QR labels`。
 - `/printer-consumables` 现在在扫码登记前展示所有已启用真实打印机的独立二维码，并支持下载 SVG 标签；虚拟测试机不会出现在这个标签区。
 - 标签编码的是手机可访问地址 `/printer-consumables?printer=printer:<id>`。扫码后前端已有解析逻辑会锁定对应打印机，随后扫描耗材卷并点击“确认登记”即可替换旧直供耗材。
 - 二维码不含打印机 IP、序列号或访问码；手机页面依然遵守 HTTPS 与现有权限控制。
