@@ -186,11 +186,12 @@ class _ModelObjectGeometry:
 def _build_relative_vertices(archive: zipfile.ZipFile) -> list[tuple[float, float, float]]:
     """Read build geometry after component and build-item orientation.
 
-    The returned points deliberately exclude each build item's absolute
-    translation.  Automatic packing supplies a new XY translation later;
-    retaining the source item's 3x3 matrix preserves its orientation and any
-    authored scale while allowing the planner to reason about the real bed
-    projection (for example, a source rotated 90 degrees around X).
+    The returned points preserve relative offsets between all build items in a
+    complete product set, then normalize the set's global XY origin. Automatic
+    packing supplies a new XY translation later; retaining the source item's
+    3x3 matrix preserves its orientation and any authored scale while allowing
+    the planner to reason about the real bed projection (for example, a source
+    rotated 90 degrees around X).
     """
 
     model_names = [name for name in archive.namelist() if name.endswith(".model")]
@@ -257,11 +258,14 @@ def _build_relative_vertices(archive: zipfile.ZipFile) -> list[tuple[float, floa
         object_id = _attribute(item, "objectid")
         if object_id is None:
             continue
-        # The planner replaces only the absolute translation.  Keep the
-        # authored 3x3 orientation (and any authored scale) for geometry.
-        points.extend(resolve(root_name, object_id, _without_translation(_parse_transform(_attribute(item, "transform"))), set()))
+        # Measure the complete source set with authored translations intact.
+        # The final layout moves the whole set as one rigid unit, so separate
+        # build items retain their intentional gaps and relative positions.
+        points.extend(resolve(root_name, object_id, _parse_transform(_attribute(item, "transform")), set()))
     if points:
-        return points
+        min_x = min(point[0] for point in points)
+        min_y = min(point[1] for point in points)
+        return [(x - min_x, y - min_y, z) for x, y, z in points]
 
     # Some legacy 3MF files omit build references. Keep the old best-effort
     # behavior instead of claiming that a valid archive has no geometry.
@@ -317,6 +321,28 @@ def inspect_projected_footprint(path: Path) -> list[tuple[float, float]]:
         raise
     except (OSError, zipfile.BadZipFile) as exc:
         raise SlicePlanningError(f"无法读取 3MF 投影轮廓：{exc}") from exc
+
+
+def assess_source_for_printer(
+    path: Path,
+    printer: PrinterBuildVolume,
+    *,
+    strategy: str = "auto_pack",
+    configured_units_per_plate: float = 1,
+) -> SlicePlan:
+    """Validate one complete source product set against a printer volume."""
+
+    source, source_plate_count = inspect_3mf(path)
+    footprint = inspect_projected_footprint(path) if strategy == "auto_pack" else None
+    return plan_slice(
+        strategy=strategy,
+        requested_quantity=1,
+        configured_units_per_plate=configured_units_per_plate,
+        source=source,
+        printer=printer,
+        source_plate_count=source_plate_count,
+        projected_footprint=footprint,
+    )
 
 
 def _projected_layout(
@@ -515,6 +541,7 @@ def plan_slice(
     printer: PrinterBuildVolume,
     source_plate_count: int = 1,
     projected_footprint: list[tuple[float, float]] | None = None,
+    capacity_limit: int | None = None,
 ) -> SlicePlan:
     """Create a fixed-layout or auto-packed deterministic plate plan."""
 
@@ -563,6 +590,12 @@ def plan_slice(
         capacity, placements = _projected_capacity(projected_footprint, printer)
     else:
         capacity, placements = _grid_capacity(source, printer)
+    if capacity_limit is not None and capacity_limit > 0 and capacity > capacity_limit:
+        capacity = capacity_limit
+        if projected_footprint:
+            placements = _projected_layout(projected_footprint, capacity, printer)
+        else:
+            placements = []
     return SlicePlan(
         strategy=strategy,
         requested_quantity=requested_quantity,
@@ -724,7 +757,7 @@ def normalize_build_item_positions(source_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
-def apply_build_item_layout(
+def _apply_build_item_layout_legacy(
     source_bytes: bytes,
     placements: list[dict[str, float]],
 ) -> bytes:
@@ -790,7 +823,76 @@ def apply_build_item_layout(
     except KeyError as exc:
         raise SlicePlanningError("3MF 缺少 3D/3dmodel.model 模型文件") from exc
     except (OSError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
-        raise SlicePlanningError(f"无法写入 3MF 摆盘坐标：{exc}") from exc
+        raise SlicePlanningError("3MF layout write failed") from exc
+    return output.getvalue()
+
+
+def apply_build_item_layout(
+    source_bytes: bytes,
+    placements: list[dict[str, float]],
+) -> bytes:
+    """Place complete product-set groups while preserving component offsets."""
+
+    source = BytesIO(source_bytes)
+    output = BytesIO()
+    try:
+        with zipfile.ZipFile(source, "r") as source_zip:
+            model_name = "3D/3dmodel.model"
+            root = ElementTree.fromstring(source_zip.read(model_name))
+            build = next((node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "build"), None)
+            items = [node for node in (list(build) if build is not None else []) if node.tag.rsplit("}", 1)[-1] == "item"]
+            if not placements or len(items) % len(placements) != 0:
+                raise SlicePlanningError("摆盘对象数量与产品套数不一致")
+            group_size = len(items) // len(placements)
+            transforms: list[list[float]] = []
+            for item in items:
+                values = item.attrib.get("transform", "").split()
+                if not values:
+                    values = ["1", "0", "0", "0", "1", "0", "0", "0", "1", "0", "0", "0"]
+                if len(values) != 12:
+                    raise SlicePlanningError("3MF build item 的变换矩阵无效")
+                transforms.append([float(value) for value in values])
+            for placement_index, placement in enumerate(placements):
+                x_mm = float(placement["x_mm"])
+                y_mm = float(placement["y_mm"])
+                rotation = float(placement.get("rotation_deg", 0.0))
+                radians = math.radians(rotation)
+                cosine, sine = math.cos(radians), math.sin(radians)
+                anchor = transforms[placement_index * group_size]
+                for offset in range(group_size):
+                    item_index = placement_index * group_size + offset
+                    item = items[item_index]
+                    numbers = transforms[item_index]
+                    relative_x = numbers[9] - anchor[9]
+                    relative_y = numbers[10] - anchor[10]
+                    matrix = numbers[:9]
+                    rotated = [
+                        cosine * matrix[0] - sine * matrix[3],
+                        cosine * matrix[1] - sine * matrix[4],
+                        matrix[2],
+                        sine * matrix[0] + cosine * matrix[3],
+                        sine * matrix[1] + cosine * matrix[4],
+                        matrix[5],
+                        matrix[6],
+                        matrix[7],
+                        matrix[8],
+                    ]
+                    placed_x = x_mm + cosine * relative_x - sine * relative_y
+                    placed_y = y_mm + sine * relative_x + cosine * relative_y
+                    item.attrib["transform"] = " ".join(
+                        [*(f"{value:.9g}" for value in rotated), f"{placed_x:.9g}", f"{placed_y:.9g}", f"{numbers[11]:.9g}"]
+                    )
+            ElementTree.register_namespace("", "http://schemas.microsoft.com/3dmanufacturing/core/2015/02")
+            ElementTree.register_namespace("BambuStudio", "http://schemas.bambulab.com/package/2021")
+            ElementTree.register_namespace("p", "http://schemas.microsoft.com/3dmanufacturing/production/2015/06")
+            model_bytes = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as output_zip:
+                for item in source_zip.infolist():
+                    output_zip.writestr(item, model_bytes if item.filename == model_name else source_zip.read(item.filename))
+    except (KeyError, ValueError, OSError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+        if isinstance(exc, SlicePlanningError):
+            raise
+        raise SlicePlanningError("3MF layout write failed") from exc
     return output.getvalue()
 
 
@@ -1225,6 +1327,7 @@ async def slice_plate_job_real(
                     printer=target_volume,
                     source_plate_count=source_plate_count,
                     projected_footprint=projected_footprint,
+                    capacity_limit=job.max_units_per_plate,
                 )
                 layout_plan = plan
                 plate_quantities = []
@@ -1433,6 +1536,16 @@ async def slice_plate_job_real(
                 )
 
         first = plates[0]
+        time_limit_seconds = max(1, int(job.slice_time_limit_seconds or 108000))
+        exceeds_time_limit = any(
+            isinstance(plate.get("print_time_seconds"), (int, float))
+            and float(plate["print_time_seconds"]) > time_limit_seconds
+            for plate in plates
+        )
+        if exceeds_time_limit and job.slice_time_review_status != "approved":
+            job.slice_time_review_status = "pending"
+        elif not exceeds_time_limit:
+            job.slice_time_review_status = "not_required"
         job.slice_result = {
             "real_slice": True,
             "simulation_only": False,
@@ -1457,6 +1570,9 @@ async def slice_plate_job_real(
             "target_printer_preset": first["target_printer_preset"],
             "target_printer_model": first["target_printer_model"],
             "print_time_seconds": first["print_time_seconds"],
+            "time_limit_seconds": time_limit_seconds,
+            "time_review_required": exceeds_time_limit and job.slice_time_review_status == "pending",
+            "max_units_per_plate": max((int(value) for value in plate_quantities), default=0),
             "filament_used_g": first["filament_used_g"],
             "filament_used_mm": first["filament_used_mm"],
         }
@@ -1515,6 +1631,7 @@ async def slice_plate_job(db: AsyncSession, plate_job_id: int) -> PlateJob:
                 height_mm=virtual_printer.build_height_mm,
             ),
             source_plate_count=source_plate_count,
+            capacity_limit=job.max_units_per_plate,
         )
         digest = sha256(source_path.read_bytes()).hexdigest()
         result = plan.to_dict()
@@ -1540,4 +1657,26 @@ async def slice_plate_job(db: AsyncSession, plate_job_id: int) -> PlateJob:
         job.slice_error = str(exc)
     await db.commit()
     await db.refresh(job)
+    return job
+
+
+async def repack_slice_job_until_time_limit(db: AsyncSession, plate_job_id: int) -> PlateJob:
+    """After rejection, retry with fewer complete product sets per plate."""
+
+    job = await slice_plate_job_real(db, plate_job_id)
+    for _ in range(100):
+        if job.slice_time_review_status != "pending":
+            return job
+        result = job.slice_result if isinstance(job.slice_result, dict) else {}
+        quantities = [int(value) for value in result.get("plate_quantities") or [] if int(value) > 0]
+        current_max = max(quantities, default=1)
+        if current_max <= 1:
+            return job
+        job.max_units_per_plate = current_max - 1
+        job.slice_time_review_status = "not_required"
+        job.slice_status = "pending"
+        job.slice_result = None
+        job.slice_error = None
+        await db.commit()
+        job = await slice_plate_job_real(db, plate_job_id)
     return job

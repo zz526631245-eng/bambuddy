@@ -713,6 +713,66 @@ async def advance_virtual_plate_job(
     return job, False
 
 
+async def review_slice_time(
+    db: AsyncSession,
+    *,
+    plate_job_id: int,
+    operation_id: str,
+    approve: bool,
+    actor_user_id: int | None,
+) -> tuple[PlateJob, bool]:
+    """Approve a long plate or request a smaller complete-set repack."""
+
+    replay = await _operation(db, operation_id)
+    if replay:
+        job = await db.get(PlateJob, plate_job_id)
+        if job is None:
+            raise ProductionOrderError("打印任务不存在")
+        return job, True
+    job = (
+        await db.execute(
+            select(PlateJob)
+            .where(PlateJob.id == plate_job_id)
+            .options(selectinload(PlateJob.requirement))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise ProductionOrderError("打印任务不存在")
+    if job.slice_status != "succeeded" or job.slice_time_review_status != "pending":
+        raise ProductionOrderError("当前任务不需要这个时间确认")
+    payload: dict[str, object] = {"plate_job_id": job.id, "approve": approve}
+    if approve:
+        job.slice_time_review_status = "approved"
+        operation_type = "production_plate_job_time_approved"
+    else:
+        result = job.slice_result if isinstance(job.slice_result, dict) else {}
+        quantities = [int(value) for value in result.get("plate_quantities") or [] if int(value) > 0]
+        current_max = max(quantities, default=1)
+        if current_max <= 1:
+            raise ProductionOrderError("单个完整产品已超过30小时，无法再拆小，请人工确认或更换机型")
+        job.max_units_per_plate = current_max - 1
+        job.slice_time_review_status = "not_required"
+        job.slice_status = "pending"
+        job.slice_result = None
+        job.slice_error = None
+        payload["next_max_units_per_plate"] = job.max_units_per_plate
+        operation_type = "production_plate_job_time_repack_requested"
+    db.add(
+        OperationLog(
+            operation_id=operation_id,
+            operation_type=operation_type,
+            entity_type="production_order",
+            entity_id=job.requirement.order_id,
+            actor_user_id=actor_user_id,
+            payload=payload,
+        )
+    )
+    await db.commit()
+    await db.refresh(job)
+    return job, False
+
+
 async def preview_plate_jobs(db: AsyncSession, order_id: int) -> tuple[ProductionOrder, list[dict]]:
     order = await _load_order(db, order_id)
     if not order:

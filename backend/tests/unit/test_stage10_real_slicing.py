@@ -54,6 +54,15 @@ def _build_source_3mf() -> bytes:
     return out.getvalue()
 
 
+def _multi_item_source_3mf() -> bytes:
+    out = BytesIO()
+    model = b'''<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="2" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object><object id="3" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="5" y="0" z="0"/><vertex x="0" y="5" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 0 0 0"/><item objectid="3" transform="1 0 0 0 1 0 0 0 1 20 0 0"/></build></model>'''
+    with ZipFile(out, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("Metadata/project_settings.config", json.dumps({"printer_model": "A1"}))
+        archive.writestr("3D/3dmodel.model", model)
+    return out.getvalue()
+
+
 def _rotated_component_source_3mf() -> bytes:
     out = BytesIO()
     root_model = b'''<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="2" type="model"><components><component p:path="/3D/Objects/object_1.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object></resources><build><item objectid="2" transform="1 0 0 0 0 1 0 -1 0 128 128 3.9"/></build></model>'''
@@ -110,6 +119,24 @@ def test_auto_pack_duplicates_one_product_for_the_requested_plate_quantity():
         assert json.loads(archive.read("Metadata/project_settings.config"))["printer_model"] == "A1"
         model = archive.read("3D/3dmodel.model").decode()
         assert model.count("objectid=\"2\"") == 3
+
+
+def test_auto_pack_keeps_all_source_build_items_as_one_rigid_product_set():
+    source = _multi_item_source_3mf()
+    expanded = duplicate_build_items(source, 2)
+    placed = apply_build_item_layout(
+        expanded,
+        [{"x_mm": 40, "y_mm": 40, "rotation_deg": 0}, {"x_mm": 100, "y_mm": 40, "rotation_deg": 90}],
+    )
+    with ZipFile(BytesIO(placed)) as archive:
+        root = ElementTree.fromstring(archive.read("3D/3dmodel.model"))
+    items = [node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "item"]
+    transforms = [tuple(float(value) for value in item.attrib["transform"].split()) for item in items]
+    assert transforms[0][9:11] == pytest.approx((40, 40))
+    assert transforms[1][9:11] == pytest.approx((60, 40))
+    # The second complete set rotates as one unit, retaining the 20mm gap.
+    assert transforms[2][9:11] == pytest.approx((100, 40))
+    assert transforms[3][9:11] == pytest.approx((100, 60))
 
 
 def test_geometry_inspection_applies_authored_build_rotation(tmp_path):

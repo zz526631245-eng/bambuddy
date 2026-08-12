@@ -50,6 +50,10 @@ async def auto_dispatch_real_slice_job(db: AsyncSession, job: PlateJob) -> dict[
 
     if job.virtual_printer_id is not None or job.status != PlateJobStatus.ASSIGNED.value:
         return None
+    if job.slice_time_review_status == "pending":
+        # A plate estimated above the configured limit is held until the
+        # operator approves it or rejects it for a smaller re-pack.
+        return None
     if job.slice_status != "succeeded" or job.queue_item_id is None:
         return None
     result = job.slice_result if isinstance(job.slice_result, dict) else {}

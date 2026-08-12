@@ -32,6 +32,11 @@ class PrinterProfile(Base):
     # profile.  Current loaded material belongs to the printer row itself.
     supported_materials: Mapped[list] = mapped_column(JSON, default=list)
     supported_colors: Mapped[list] = mapped_column(JSON, default=list)
+    # Physical build volume used for geometry-aware production routing.
+    # Zero preserves the legacy model-code fallback for old profiles.
+    build_width_mm: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    build_depth_mm: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    build_height_mm: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

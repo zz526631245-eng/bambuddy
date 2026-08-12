@@ -23,6 +23,35 @@ from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.virtual_printer import VirtualPrinter
 
 
+async def test_long_slice_rejection_reduces_complete_sets_per_plate(
+    db_session: AsyncSession,
+    tmp_path: Path,
+):
+    """Rejecting a long plate requests a smaller complete-set repack."""
+
+    _printer, _artifact, job, _queue = await _real_slice_fixture(db_session, tmp_path)
+    job.slice_status = "succeeded"
+    job.slice_time_review_status = "pending"
+    job.slice_result = {"plate_quantities": [4, 2], "time_review_required": True}
+    await db_session.commit()
+
+    from backend.app.services.production_order_service import review_slice_time
+
+    reviewed, replayed = await review_slice_time(
+        db_session,
+        plate_job_id=job.id,
+        operation_id="stage14-time-reject",
+        approve=False,
+        actor_user_id=None,
+    )
+
+    assert replayed is False
+    assert reviewed.max_units_per_plate == 3
+    assert reviewed.slice_status == "pending"
+    assert reviewed.slice_time_review_status == "not_required"
+    assert reviewed.slice_result is None
+
+
 async def test_real_assignment_uses_scanned_direct_feed_over_stale_virtual_profile(
     db_session: AsyncSession,
     tmp_path: Path,

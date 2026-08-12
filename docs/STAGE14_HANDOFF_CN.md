@@ -100,6 +100,36 @@ ruff check backend/app/services/production_allocator.py backend/app/services/pro
 # All checks passed
 ```
 
+## 本次整套产品路由与长盘审核修复（2026-08-12）
+
+- `PrinterProfile` 增加可选的打印宽度、深度、高度；三个值都大于 0 时按配置判断，否则按已知机型默认打印体积。生产分配会解析完整 3MF 的 build-item/组件变换，保留整套零件的相对间距，按整套的真实投影判断能否放入目标机。
+- `compatible_printer_models` 只作为优先级提示，不再阻止实际尺寸兼容的其他机型；所有可用真实机按每盘可容纳的完整产品套数择优。若某型号的真实设备忙碌、离线或料型不匹配，不会把生产任务静默回退到虚拟测试机。
+- 自动摆盘复制的是完整 build-item 组：一个源 3MF 中的多个零件始终作为一套同步平移和绕 Z 轴旋转；不会缩放、不会改 Z 高度、不会改源文件的切片参数。`product_set_index` 与每盘数量仍由后端记录。
+- 真实切片超过 30 小时会把 `PlateJob.slice_time_review_status` 置为 `pending`，自动入队逻辑会暂停。订单详情可“确认仍然分配”；选择“拒绝并重新摆盘”后按完整产品套数递减并重新切片，直到低于限制；单套仍超时则返回人工确认/换机提示。
+- 新增 `/api/v1/production/plate-jobs/{id}/slice-time-review`，使用幂等 `operation_id`；新增 Stage 14 可重复迁移，补齐打印配置尺寸、盘任务审核状态/时限/每盘上限。同步修复生产模型注册和生产表集合，确保旧 SQLite 升级测试可重复执行。
+
+本次验证：
+
+```powershell
+python -m pytest backend/tests/unit/test_production_migrations.py backend/tests/unit/test_stage10_real_slicing.py backend/tests/unit/test_stage10_slicer.py backend/tests/integration/test_stage9_production_allocation.py backend/tests/integration/test_stage10_slicing.py backend/tests/integration/test_product_size_routing.py backend/tests/integration/test_stage14_real_printer_dispatch.py backend/tests/integration/test_production_order_controls.py -q
+# 50 passed
+
+ruff check backend/app/api/routes/production.py backend/app/core/database.py backend/app/models/__init__.py backend/app/models/printer_profile.py backend/app/models/production.py backend/app/schemas/production.py backend/app/services/production_eligibility.py backend/app/services/production_order_service.py backend/app/services/production_real_dispatch.py backend/app/services/production_slicer.py backend/tests/integration/test_stage14_real_printer_dispatch.py backend/tests/unit/test_stage10_real_slicing.py
+# All checks passed
+
+Set-Location frontend
+npm.cmd run build
+npm.cmd run lint
+```
+
+`backend/tests/integration/test_production_api.py` 仍有 1 个旧断言失败：测试要求无源文件时返回“零件清单”，现行阶段 8 合同返回“请先上传产品源文件”。该失败与本次几何/审核改动无关，未改变现行产品源文件必填规则。
+
+## 下一步与风险
+
+- 需要在真实打印机旁用低风险测试模型人工验证：尺寸匹配、超 30 小时确认/拒绝、真实切片产物和打印完成后的质检/清板流程。
+- 多切片产物仍不会只发送第一盘，因为现有 `PlateJob.queue_item_id` 只能关联一个队列项；需后续扩展多盘队列关系后再支持整组自动发送。
+- 本次没有构建安装包，也没有提交任何真实打印机访问码或生产数据。
+
 ## 未完成、风险与下一步
 
 - 尚未进行一台真实打印机的人工验收；首次验收必须使用无关紧要的测试模型并有人在机器旁。

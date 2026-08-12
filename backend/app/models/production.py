@@ -61,9 +61,12 @@ PRODUCTION_TABLE_NAMES = {
     "operation_logs",
     "product_images",
     "product_components",
+    "product_files",
     "production_bom_items",
     "production_recipe_profiles",
     "material_type_spool_mappings",
+    "production_consumable_units",
+    "production_printer_consumables",
     "slice_artifacts",
     "production_printer_status",
 }
@@ -178,6 +181,12 @@ class PlateJob(Base):
     slice_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     slice_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     sliced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Estimates above this limit require an explicit operator decision.
+    slice_time_review_status: Mapped[str] = mapped_column(
+        String(20), default="not_required", nullable=False
+    )
+    slice_time_limit_seconds: Mapped[int] = mapped_column(Integer, default=108000, nullable=False)
+    max_units_per_plate: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Stage 11 virtual workflow facts.  ``waiting_cleanup`` is intentionally
     # reused for both review phases to keep old SQLite status constraints
     # compatible: a missing quality timestamp means "awaiting quality" and a

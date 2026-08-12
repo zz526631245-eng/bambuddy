@@ -26,7 +26,7 @@ const operationText: Record<string, string> = {
 type SlicePlate = { slice_artifact_id: number; output_file_name?: string; plate_quantity?: number };
 
 function SliceJobRow({
-  job, onRetry, onRealSlice, onCancel, onDelete, onDownload, onWorkflow,
+  job, onRetry, onRealSlice, onCancel, onDelete, onDownload, onWorkflow, onReviewTime = (id, approve) => { void productionApi.reviewSliceTime(id, approve).then(() => window.location.reload()); },
 }: {
   job: PlateJob;
   onRetry: (id: number) => void;
@@ -35,6 +35,7 @@ function SliceJobRow({
   onDelete: (id: number) => void;
   onDownload: (id: number) => void;
   onWorkflow: (input: {id:number;action:'prepare'|'start'|'finish'|'quality'|'cleanup';data?:{machine_result?:'completed'|'failed';good_quantity?:number}}) => void;
+  onReviewTime?: (id:number, approve:boolean) => void;
 }) {
   const [partialGood, setPartialGood] = useState(Math.max(0, job.planned_quantity - 1));
   const result = job.slice_result;
@@ -58,6 +59,7 @@ function SliceJobRow({
     {job.slice_error && <p role="alert" className="text-sm text-red-400">{job.slice_error}</p>}
     {plates.length > 0 && <div className="space-y-1 text-sm"><div className="text-bambu-gray">切好的打印文件盘：</div>{plates.map(plate => <div key={plate.slice_artifact_id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-bambu-dark-secondary px-2 py-1 text-white"><span>{plate.output_file_name || `切片文件 #${plate.slice_artifact_id}`}{typeof plate.plate_quantity === 'number' ? ` · 一盘 ${plate.plate_quantity} 套` : ''}</span><Button type="button" variant="secondary" size="sm" onClick={() => onDownload(plate.slice_artifact_id)}><Download size={14} />下载</Button></div>)}</div>}
     <div className="flex flex-wrap gap-2">
+      {job.slice_time_review_status === 'pending' && <div className="w-full rounded bg-amber-950/40 p-3 space-y-2"><div className="text-sm text-amber-200">当前摆盘超过30小时限制</div><div className="flex flex-wrap gap-2"><Button type="button" onClick={() => onReviewTime(job.id, true)}>确认仍然分配</Button><Button type="button" variant="secondary" onClick={() => onReviewTime(job.id, false)}>拒绝并重新摆盘</Button></div></div>}
       {!isRealAssigned && workflowStatus === 'assigned' && <Button type="button" size="sm" onClick={() => onWorkflow({id:job.id,action:'prepare'})}>进入待打印</Button>}
       {!isRealAssigned && workflowStatus === 'ready' && <Button type="button" size="sm" onClick={() => onWorkflow({id:job.id,action:'start'})}>开始虚拟打印</Button>}
       {!isRealAssigned && workflowStatus === 'printing' && <><Button type="button" size="sm" onClick={() => onWorkflow({id:job.id,action:'finish',data:{machine_result:'completed'}})}>模拟打印完成</Button><Button type="button" variant="danger" size="sm" onClick={() => onWorkflow({id:job.id,action:'finish',data:{machine_result:'failed'}})}>模拟打印失败</Button></>}

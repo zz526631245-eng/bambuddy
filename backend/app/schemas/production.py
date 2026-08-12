@@ -233,6 +233,9 @@ class PrinterProfileCreate(BaseModel):
     is_active: bool = True
     supported_materials: list[str] = []
     supported_colors: list[str] = []
+    build_width_mm: float = Field(default=0, ge=0)
+    build_depth_mm: float = Field(default=0, ge=0)
+    build_height_mm: float = Field(default=0, ge=0)
 
     _strip_fields = field_validator("code", "name", "printer_model")(_strip_required)
 
@@ -250,6 +253,9 @@ class PrinterProfileResponse(_FromAttributes):
     is_active: bool
     supported_materials: list[str]
     supported_colors: list[str]
+    build_width_mm: float
+    build_depth_mm: float
+    build_height_mm: float
     created_at: datetime
     updated_at: datetime
 
@@ -371,6 +377,9 @@ class PlateJobResponse(_FromAttributes):
     slice_attempts: int
     slice_error: str | None
     slice_result: dict | None
+    slice_time_review_status: str = "not_required"
+    slice_time_limit_seconds: int = 108000
+    max_units_per_plate: int | None = None
     source_plate_index: int = 0
     product_set_index: int = 0
     sliced_at: datetime | None
@@ -436,6 +445,15 @@ class RealSliceRequest(BaseModel):
 
     target_printer_preset: str | None = Field(default=None, min_length=1, max_length=255)
     target_printer_model: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class PlateJobSliceTimeReview(BaseModel):
+    """Operator decision for a plate whose estimate exceeds 30 hours."""
+
+    operation_id: str = Field(min_length=1, max_length=100)
+    approve: bool
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
 
 
 class RealPrinterDispatchRequest(BaseModel):

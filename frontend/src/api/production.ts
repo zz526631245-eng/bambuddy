@@ -11,6 +11,7 @@ export interface PlateJob {
   print_started_at?:string|null; print_finished_at?:string|null; quality_confirmed_at?:string|null; cleanup_confirmed_at?:string|null;
   slice_status:string; slice_attempts:number; slice_error?:string|null;
   slice_result?:Record<string,unknown>|null; sliced_at?:string|null; created_at:string; updated_at:string;
+  slice_time_review_status?:'not_required'|'pending'|'approved'|'rejected'; slice_time_limit_seconds?:number; max_units_per_plate?:number|null;
 }
 export interface ProductionRequirement {
   id:number; order_id:number; recipe_id:number; component_id?:number|null; unit_quantity:number;
@@ -102,6 +103,7 @@ export const productionApi={
   advanceWorkflow:(plateJobId:number,action:'prepare'|'start'|'finish'|'quality'|'cleanup',data?:{machine_result?:'completed'|'failed';good_quantity?:number})=>
     request<PlateJob>(`/production/plate-jobs/${plateJobId}/workflow/${action}`,{method:'POST',body:JSON.stringify({operation_id:operationId(`plate-${action}`),...(data ?? {})})}),
   realSlice:(plateJobId:number,data?:{target_printer_preset?:string;target_printer_model?:string})=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/real-slice`,{method:'POST',body:JSON.stringify(data ?? {})}),
+  reviewSliceTime:(plateJobId:number,approve:boolean)=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/slice-time-review`,{method:'POST',body:JSON.stringify({operation_id:operationId('slice-time-review'),approve})}),
   listSliceArtifacts:()=>request<SliceArtifact[]>('/production/slice-artifacts'),
   dispatchSliceArtifact:(artifactId:number,data:{printer_id:number;plate_job_id?:number})=>
     request<RealPrinterDispatch>(`/production/slice-artifacts/${artifactId}/dispatch`,{method:'POST',body:JSON.stringify({operation_id:operationId('stage14-dispatch'),confirm:true,...data})}),

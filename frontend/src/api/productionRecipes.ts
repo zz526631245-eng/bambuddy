@@ -1,5 +1,5 @@
 import { request } from './client';
-export interface PrinterProfile { id:number;code:string;name:string;printer_model:string;nozzle_diameter:number;version:number;location?:string|null;profile_group?:string|null;auto_production_enabled:boolean;is_active:boolean }
+export interface PrinterProfile { id:number;code:string;name:string;printer_model:string;nozzle_diameter:number;version:number;location?:string|null;profile_group?:string|null;auto_production_enabled:boolean;is_active:boolean;build_width_mm:number;build_depth_mm:number;build_height_mm:number }
 export interface ProductionRecipe { id:number;code:string;name:string;product_id:number;component_id?:number|null;material_type_id?:number|null;printer_profile_id?:number|null;library_file_id?:number|null;slicer_pipeline_id?:number|null;slicer_preset?:string|null;compatible_profile_ids:number[];version:number;is_active:boolean }
 export const productionRecipesApi={
  profiles:()=>request<PrinterProfile[]>('/production/printer-profiles'),

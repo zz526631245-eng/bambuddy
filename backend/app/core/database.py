@@ -398,6 +398,33 @@ async def ensure_stage13_printer_status(conn):
     )
 
 
+async def ensure_stage14_production_planning(conn):
+    """Add geometry and long-run review facts for production planning."""
+
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN build_width_mm FLOAT DEFAULT 0 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN build_depth_mm FLOAT DEFAULT 0 NOT NULL")
+    await _safe_execute(conn, "ALTER TABLE printer_profiles ADD COLUMN build_height_mm FLOAT DEFAULT 0 NOT NULL")
+    await _safe_execute(
+        conn,
+        "ALTER TABLE plate_jobs ADD COLUMN slice_time_review_status VARCHAR(20) DEFAULT 'not_required' NOT NULL",
+    )
+    await _safe_execute(
+        conn,
+        "ALTER TABLE plate_jobs ADD COLUMN slice_time_limit_seconds INTEGER DEFAULT 108000 NOT NULL",
+    )
+    await _safe_execute(conn, "ALTER TABLE plate_jobs ADD COLUMN max_units_per_plate INTEGER")
+    await _safe_execute(
+        conn,
+        "UPDATE plate_jobs SET slice_time_review_status = 'not_required' "
+        "WHERE slice_time_review_status IS NULL OR slice_time_review_status = ''",
+    )
+    await _safe_execute(
+        conn,
+        "UPDATE plate_jobs SET slice_time_limit_seconds = 108000 "
+        "WHERE slice_time_limit_seconds IS NULL OR slice_time_limit_seconds < 1",
+    )
+
+
 async def init_db():
     # Import models to register them with SQLAlchemy
     from backend.app.models import (  # noqa: F401
@@ -924,6 +951,7 @@ async def run_migrations(conn):
     await ensure_stage11_columns(conn)
     await ensure_stage12_columns(conn)
     await ensure_stage13_printer_status(conn)
+    await ensure_stage14_production_planning(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

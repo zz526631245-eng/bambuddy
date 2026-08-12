@@ -43,6 +43,7 @@ from backend.app.schemas.production import (
     PlateJobConfirmResponse,
     PlateJobPreviewResponse,
     PlateJobResponse,
+    PlateJobSliceTimeReview,
     PlateJobWorkflowAction,
     PrinterConsumableResponse,
     PrinterConsumableScan,
@@ -88,6 +89,7 @@ from backend.app.services.production_order_service import (
     order_detail,
     preview_plate_jobs,
     product_order_summaries,
+    review_slice_time,
     update_order as update_production_order,
 )
 from backend.app.services.production_printer_status import (
@@ -98,6 +100,7 @@ from backend.app.services.production_real_dispatch import auto_dispatch_real_sli
 from backend.app.services.production_slicer import (
     SlicePlanningError,
     _absolute_library_path,
+    repack_slice_job_until_time_limit,
     slice_plate_job,
     slice_plate_job_real,
 )
@@ -876,6 +879,36 @@ async def real_slice_plate_job(
             target_printer_preset=payload.target_printer_preset if payload else None,
             target_printer_model=payload.target_printer_model if payload else None,
         )
+    except SlicePlanningError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/plate-jobs/{plate_job_id}/slice-time-review", response_model=PlateJobResponse)
+async def review_plate_job_slice_time(
+    plate_job_id: int,
+    payload: PlateJobSliceTimeReview,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
+):
+    """Approve a long plate or automatically repack it below 30 hours."""
+
+    try:
+        job, replayed = await review_slice_time(
+            db,
+            plate_job_id=plate_job_id,
+            operation_id=payload.operation_id,
+            approve=payload.approve,
+            actor_user_id=current_user.id if current_user else None,
+        )
+        if not replayed and not payload.approve:
+            job = await repack_slice_job_until_time_limit(db, plate_job_id)
+            if job.slice_time_review_status != "pending":
+                await auto_dispatch_real_slice_job(db, job)
+        elif not replayed and payload.approve:
+            await auto_dispatch_real_slice_job(db, job)
+        return job
+    except ProductionOrderError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SlicePlanningError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
