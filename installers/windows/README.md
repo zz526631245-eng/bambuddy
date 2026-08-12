@@ -1,5 +1,7 @@
 # Bambuddy Windows Installer
 
+> 本次正式空白版安装包会初始化一个全新的生产数据库，不导入开发机账号、产品、库存、打印机或虚拟测试数据。
+
 Builds a self-contained Windows installer (`.exe`) for Bambuddy: embedded
 Python 3.13 distribution + pre-built frontend + NSSM-supervised Windows
 service. No Python or Node installation required on the target machine.
@@ -12,6 +14,8 @@ service. No Python or Node installation required on the target machine.
 - **Service:** registered via NSSM, runs as `LocalSystem`, autostart on boot
 - **Service command:** `python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --loop asyncio` (`--loop asyncio` avoids a uvloop TLS bug that can truncate VP FTP uploads, #1896)
 - **Bundled binaries:** Python 3.13 embeddable, NSSM, ffmpeg static build
+- **Production build:** `VITE_PRODUCTION_BUILD=1` hides the virtual-printer test entry; the service sets `BAMBUDDY_PRODUCTION_BUILD=1`.
+- **First install:** `service\prepare-clean-data.bat` creates an empty data directory. An existing data directory is moved to `previous-data-<timestamp>` and is not loaded. The `.fresh-install-complete` marker prevents later upgrades from resetting production data.
 
 Browser is the UI. Start Menu shortcut opens `http://localhost:8000`.
 
@@ -52,6 +56,8 @@ python build.py
 
 Output: `installers\windows\build\output\bambuddy-windows-setup.exe`
 
+The current local build is `build\output\bambuddy-0.2.4.9-windows-x64-setup.exe`.
+
 ## Testing without signing
 
 The installer can be built and run unsigned. Windows SmartScreen will
@@ -76,6 +82,12 @@ as a release asset.
 - **Spoolman:** explicitly NOT bundled in v1. Users who want Spoolman
   install it separately. Bambuddy internal-inventory mode is the default
   on Windows.
+- **Slicer sidecar:** the installer includes Bambuddy's slicer integration and
+  slice-library code, but does not redistribute Bambu Studio/OrcaSlicer or
+  Docker. Configure an existing sidecar in Settings → Slicer (or run the
+  optional `slicer-api/docker-compose.yml` stack with Docker Desktop) before
+  relying on automatic slicing. This avoids silently shipping third-party
+  binaries and licenses inside the one-click installer.
 - **Bundle size:** estimated 250–350MB installed (mostly opencv +
   ffmpeg + matplotlib). Acceptable for a v1; can investigate slimming
   later if users complain.

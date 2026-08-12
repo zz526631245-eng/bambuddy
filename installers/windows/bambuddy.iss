@@ -98,6 +98,11 @@ Name: "{group}\Uninstall Bambuddy"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\Bambuddy"; Filename: "http://localhost:{#DefaultPort}"; IconFilename: "{app}\bambuddy.ico"; Tasks: desktopicon
 
 [Run]
+; This clean installer initializes an empty production database on first
+; install. Existing data is moved to a timestamped quarantine folder and is
+; never loaded by the new instance; upgrades after the marker preserve data.
+Filename: "{app}\service\prepare-clean-data.bat"; Parameters: """{commonappdata}\Bambuddy"""; Flags: runhidden waituntilterminated; StatusMsg: "Preparing a clean production data directory..."
+
 ; Register and start the Windows service
 Filename: "{app}\service\install-service.bat"; Parameters: """{app}"" ""{commonappdata}\Bambuddy"" {#DefaultPort}"; Flags: runhidden waituntilterminated; StatusMsg: "Registering Bambuddy service..."
 

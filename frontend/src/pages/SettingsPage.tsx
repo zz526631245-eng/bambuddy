@@ -49,9 +49,24 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Palette } from 'lucide-react';
 import { registerSettingsSearch, getSettingsSearchEntries } from '../lib/settingsSearch';
 import type { UsersSubTab } from '../lib/settingsSearch';
+import { QRCodeSVG } from 'qrcode.react';
+import { buildMobileConnectQrPayload } from '../utils/mobileConnectQr';
 
 const validTabs = ['general', 'plugs', 'notifications', 'queue', 'filament', 'network', 'apikeys', 'virtual-printer', 'spoolbuddy', 'failure-detection', 'users', 'backup'] as const;
 type TabType = typeof validTabs[number];
+const isProductionBuild = import.meta.env.VITE_PRODUCTION_BUILD === '1';
+
+function downloadMobileConnectQr(elementId: string, filename: string): void {
+  const svg = document.getElementById(elementId);
+  if (!(svg instanceof SVGElement)) return;
+  const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 // Cross-tab search registrations for cards rendered inline in this file.
 // Adding a new settings card? Register it here (or, if the card lives in its
@@ -171,6 +186,8 @@ export function SettingsPage() {
     setLightStyle, setLightBackground, setLightAccent,
   } = useTheme();
   const [localSettings, setLocalSettings] = useState<AppSettings | null>(null);
+  const mobileServerUrl = localSettings?.external_url?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+  const mobileConnectPayload = mobileServerUrl ? buildMobileConnectQrPayload(mobileServerUrl) : '';
   // Transient typed strings for the per-filament humidity threshold inputs
   // (#1605). Committed back to localSettings.ams_humidity_thresholds on blur
   // so intermediate values ("", "3", "5") are not eaten by the [5, 95] clamp
@@ -189,7 +206,7 @@ export function SettingsPage() {
   // Initialize tab from URL params (handle legacy ?tab=email → users tab + email sub-tab)
   const tabParam = searchParams.get('tab');
   const isLegacyEmailTab = tabParam === 'email';
-  const initialTab = isLegacyEmailTab ? 'users' : (tabParam && validTabs.includes(tabParam as TabType) ? tabParam as TabType : 'general');
+  const initialTab = isLegacyEmailTab ? 'users' : (tabParam && validTabs.includes(tabParam as TabType) && !(isProductionBuild && tabParam === 'virtual-printer') ? tabParam as TabType : 'general');
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [usersSubTab, setUsersSubTab] = useState<UsersSubTab>(isLegacyEmailTab ? 'email' : 'users');
   // Workflow tab sub-tabs (#1425): 'dispatch' = current Workflow content,
@@ -438,6 +455,7 @@ export function SettingsPage() {
     queryKey: ['virtual-printer-settings'],
     queryFn: virtualPrinterApi.getSettings,
     refetchInterval: 10000,
+    enabled: !isProductionBuild,
   });
   const virtualPrinterRunning = virtualPrinterSettings?.status?.running ?? false;
 
@@ -1433,7 +1451,7 @@ export function SettingsPage() {
             </span>
           )}
         </button>
-        <button
+        {!isProductionBuild && <button
           onClick={() => handleTabChange('virtual-printer')}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px lg:border-b-0 lg:border-l-2 lg:-ml-px lg:mb-0 lg:justify-start flex items-center gap-2 ${
             activeTab === 'virtual-printer'
@@ -1444,7 +1462,7 @@ export function SettingsPage() {
           <Printer className="w-4 h-4" />
           {t('settings.tabs.virtualPrinter')}
           <span className={`w-2 h-2 rounded-full ${virtualPrinterRunning ? 'bg-green-400' : 'bg-gray-500'}`} />
-        </button>
+        </button>}
         <button
           onClick={() => handleTabChange('spoolbuddy')}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px lg:border-b-0 lg:border-l-2 lg:-ml-px lg:mb-0 lg:justify-start flex items-center gap-2 ${
@@ -1656,6 +1674,39 @@ export function SettingsPage() {
                 <p className="text-xs text-bambu-gray mt-1">
                   {t('settings.defaultPrinterDescription')}
                 </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card id="card-mobile-connect">
+            <CardHeader>
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-bambu-green" />
+                手机 App 连接
+              </h2>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-bambu-gray">
+                在 Bambuddy 手机 App 中扫描此二维码，自动填入电脑连接地址。二维码不包含账号或密码。
+              </p>
+              <div className="mt-3 flex flex-col items-center gap-3 rounded-xl border border-bambu-dark-tertiary bg-white p-4">
+                {mobileConnectPayload && <QRCodeSVG id="mobile-connect-qr" value={mobileConnectPayload} size={220} includeMargin />}
+              </div>
+              <p className={`mt-3 break-all text-xs ${/^(https?:\/\/)?(127\.0\.0\.1|localhost)/i.test(mobileServerUrl) ? 'text-amber-300' : 'text-bambu-gray'}`}>
+                连接地址：{mobileServerUrl || '未配置'}
+              </p>
+              {/^(https?:\/\/)?(127\.0\.0\.1|localhost)/i.test(mobileServerUrl) && (
+                <p className="mt-1 text-xs text-amber-300">手机不能使用 127.0.0.1/localhost，请在网络设置中填写局域网 HTTPS 地址。</p>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="secondary" onClick={() => {
+                  if (!navigator.clipboard) {
+                    showToast('当前浏览器不支持复制，请手动复制地址', 'error');
+                    return;
+                  }
+                  void navigator.clipboard.writeText(mobileServerUrl).then(() => showToast('连接地址已复制', 'success'));
+                }}><Copy className="w-4 h-4" />复制地址</Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => downloadMobileConnectQr('mobile-connect-qr', 'bambuddy-mobile-connect.svg')}><Download className="w-4 h-4" />下载二维码</Button>
               </div>
             </CardContent>
           </Card>
@@ -4134,7 +4185,7 @@ export function SettingsPage() {
       )}
 
       {/* Virtual Printer Tab */}
-      {activeTab === 'virtual-printer' && (
+      {!isProductionBuild && activeTab === 'virtual-printer' && (
         <div id="card-vp">
           <VirtualPrinterList />
         </div>

@@ -49,6 +49,7 @@ REM in backend/app/services/layer_timelapse.py.
     "DATA_DIR=%DATA_DIR%" ^
     "LOG_DIR=%LOG_DIR%" ^
     "PORT=%PORT%" ^
+    "BAMBUDDY_PRODUCTION_BUILD=1" ^
     "PATH=%BIN_DIR%;%PATH%"
 
 REM Stdout / stderr capture. Rotate at 10MB.

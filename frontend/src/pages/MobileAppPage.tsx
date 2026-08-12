@@ -9,6 +9,7 @@ import {
 import { ApiError, getMobileServerUrl, normalizeServerUrl, setMobileServerUrl } from '../api/client';
 import { productionApi, type PlateJob, type PrinterConsumableTarget } from '../api/production';
 import { useAuth } from '../contexts/AuthContext';
+import { parseMobileConnectQrPayload } from '../utils/mobileConnectQr';
 
 type Action = 'receive' | 'change' | 'deplete' | 'scrap' | 'quality' | 'cleanup';
 type ParsedQr = { code: string; targetKey?: string; material?: string; colorHex?: string; colorName?: string };
@@ -96,13 +97,24 @@ function MobileScanner({ onDecoded, onClose }: { onDecoded: (value: string) => v
 function ServerSetup({ onSaved }: { onSaved: () => void }) {
   const [value, setValue] = React.useState(getMobileServerUrl());
   const [error, setError] = React.useState('');
+  const [scannerOpen, setScannerOpen] = React.useState(false);
   const save = () => {
     const normalized = normalizeServerUrl(value);
     if (!/^https?:\/\//i.test(normalized)) { setError('请输入完整地址，例如 https://192.168.1.20:8019'); return; }
     setMobileServerUrl(normalized);
     onSaved();
   };
-  return <div className="flex min-h-screen items-center justify-center bg-[#10171b] p-6 text-white"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#192126] p-7 shadow-2xl"><div className="mb-6 flex items-center gap-3"><div className="rounded-2xl bg-emerald-500/15 p-3 text-emerald-400"><Factory size={28} /></div><div><h1 className="text-2xl font-bold">连接 Bambuddy</h1><p className="mt-1 text-sm text-slate-400">手机 App 连接电脑上的同一台服务器</p></div></div><label className="text-sm text-slate-300">服务器 HTTPS 地址<input autoFocus value={value} onChange={event => setValue(event.target.value)} placeholder="https://192.168.1.20:8019" className="mt-2 w-full rounded-2xl border border-white/10 bg-[#10171b] px-4 py-3 text-white outline-none focus:border-emerald-400" /></label><p className="mt-3 text-xs leading-5 text-slate-500">电脑和手机需要在同一局域网。使用 HTTPS 才能打开摄像头；自签名证书首次需要在手机浏览器中信任。</p>{error && <p className="mt-3 text-sm text-rose-300">{error}</p>}<button type="button" onClick={save} className="mt-6 w-full rounded-2xl bg-emerald-500 px-4 py-3.5 font-semibold text-slate-950 hover:bg-emerald-400">连接服务器</button></div></div>;
+  const handleDecoded = (raw: string) => {
+    const server = parseMobileConnectQrPayload(raw);
+    setScannerOpen(false);
+    if (!server) {
+      setError('二维码中没有有效的 Bambuddy 服务地址');
+      return;
+    }
+    setValue(server);
+    setError('已读取电脑连接地址，请点击连接服务器');
+  };
+  return <div className="flex min-h-screen items-center justify-center bg-[#10171b] p-6 text-white"><div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#192126] p-7 shadow-2xl"><div className="mb-6 flex items-center gap-3"><div className="rounded-2xl bg-emerald-500/15 p-3 text-emerald-400"><Factory size={28} /></div><div><h1 className="text-2xl font-bold">连接 Bambuddy</h1><p className="mt-1 text-sm text-slate-400">扫描电脑设置中的二维码即可连接</p></div></div><label className="text-sm text-slate-300">服务器 HTTPS 地址<input autoFocus value={value} onChange={event => setValue(event.target.value)} placeholder="https://192.168.1.20:8019" className="mt-2 w-full rounded-2xl border border-white/10 bg-[#10171b] px-4 py-3 text-white outline-none focus:border-emerald-400" /></label><p className="mt-3 text-xs leading-5 text-slate-500">电脑和手机需要在同一局域网。使用 HTTPS 才能打开摄像头；自签名证书首次需要在手机浏览器中信任。</p>{error && <p className="mt-3 text-sm text-amber-300">{error}</p>}<div className="mt-6 grid grid-cols-2 gap-3"><button type="button" onClick={() => setScannerOpen(true)} className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 px-4 py-3.5 font-semibold text-emerald-300 hover:bg-emerald-400/10"><ScanLine size={19} />扫描电脑二维码</button><button type="button" onClick={save} className="rounded-2xl bg-emerald-500 px-4 py-3.5 font-semibold text-slate-950 hover:bg-emerald-400">连接服务器</button></div></div>{scannerOpen && <MobileScanner onDecoded={handleDecoded} onClose={() => setScannerOpen(false)} />}</div>;
 }
 
 function JobPicker({ action, jobs, onDone, onBack }: { action: 'quality' | 'cleanup'; jobs: PlateJob[]; onDone: () => void; onBack: () => void }) {

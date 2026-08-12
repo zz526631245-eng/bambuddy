@@ -1,5 +1,13 @@
 # 当前开发状态
 
+## 正式空白生产版打包（2026-08-12）
+- 已生成 Windows x64 自包含安装包：`installers/windows/build/output/bambuddy-0.2.4.9-windows-x64-setup.exe`（Inno Setup 6.7.3，约 188 MB）。安装包包含嵌入式 Python、后端、正式生产前端、NSSM 服务、ffmpeg 和首次启动脚本。
+- 正式前端构建使用 `VITE_PRODUCTION_BUILD=1`：隐藏虚拟打印机测试入口；服务使用 `BAMBUDDY_PRODUCTION_BUILD=1`。代码中的虚拟打印机实现仅保留用于开发兼容，不会创建或带入虚拟设备数据。
+- 首次安装会在 `C:\ProgramData\Bambuddy` 创建空数据目录；若检测到旧数据，会移动到带时间戳的 `previous-data-*` 隔离目录，新的安装不会读取旧账号、产品、库存或打印机。初始化标记写入 `.fresh-install-complete`，后续升级保留用户正式数据。
+- 设置页新增“手机 App 连接”二维码（不包含账号密码），Android App 首次连接页支持扫描该二维码；调试 APK 已生成：`frontend/android/app/build/outputs/apk/debug/app-debug.apk`。
+- 打包校验：连接二维码测试 3/3、API 客户端回归 24/24、TypeScript/Vite 构建通过、Android `assembleDebug` 通过、Inno Setup 编译通过。npm 仍报告现有依赖审计告警，未在本次打包中强制升级依赖。
+- 自动切片仍复用现有 Bambu Studio/OrcaSlicer sidecar 配置。Windows 安装包不擅自捆绑第三方切片器二进制；正式使用前需在设置中配置可访问的 sidecar（本机 Docker 或局域网 sidecar），否则只能使用已有切片库/手动切片入口。
+
 ## 备份与导入按钮可见性（2026-08-12）
 
 - 设置 → 备份与恢复 → 本地备份区域现在明确显示“下载备份”和“恢复备份”按钮。

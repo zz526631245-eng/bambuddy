@@ -1,5 +1,12 @@
 # Android 手机 App 交接说明
 
+## 连接二维码（2026-08-12）
+
+- 桌面端进入“设置 → 手机 App 连接”，二维码只编码服务器 HTTPS 地址，不包含账号、密码或 API 密钥；该二维码可以长期保留，换手机时重复扫描即可。
+- Android App 首次打开时点击“扫描电脑二维码”，扫描桌面端二维码后会自动填入服务器地址，再点击“连接服务器”。也可以继续手动输入地址。
+- 二维码中的地址不能是 `127.0.0.1` 或 `localhost`，应填写手机能访问的局域网 HTTPS 地址；电脑和手机需要在同一网络，并在首次使用时信任自签名证书。
+- 当前可安装调试 APK：`frontend/android/app/build/outputs/apk/debug/app-debug.apk`。正式发布前仍需使用正式签名 keystore 生成 release APK。
+
 ## 分支与范围
 
 - 分支：`codex/production-center-workspace`

@@ -219,7 +219,13 @@ def build_frontend() -> Path:
         raise RuntimeError("npm not found on PATH — install Node.js 22 LTS")
     subprocess.run([npm, "ci"], cwd=frontend, check=True, shell=False)
     log("running npm run build in frontend/")
-    subprocess.run([npm, "run", "build"], cwd=frontend, check=True, shell=False)
+    # Production installers intentionally omit the virtual-printer test UI.
+    # The backend implementation remains in the source tree for development
+    # and migrations, but a clean production install starts with no simulated
+    # printers and cannot accidentally expose the test entry point.
+    build_env = os.environ.copy()
+    build_env["VITE_PRODUCTION_BUILD"] = "1"
+    subprocess.run([npm, "run", "build"], cwd=frontend, check=True, shell=False, env=build_env)
     if not dist.exists():
         raise RuntimeError(f"expected frontend build output at {dist}")
     return dist
@@ -317,7 +323,7 @@ def _read_app_version() -> str:
     config_py = REPO_ROOT / "backend" / "app" / "core" / "config.py"
     if not config_py.exists():
         return "0.0.0+dev"
-    for raw in config_py.read_text().splitlines():
+    for raw in config_py.read_text(encoding="utf-8").splitlines():
         stripped = raw.strip()
         if stripped.startswith("APP_VERSION"):
             # APP_VERSION = "0.2.5b1"  ->  0.2.5b1
@@ -357,11 +363,11 @@ def write_version_file() -> None:
     time without a fragile file-read hack.
     """
     version = _resolve_installer_version()
-    (STAGING / "VERSION").write_text(version)
+    (STAGING / "VERSION").write_text(version, encoding="utf-8")
 
     # Inno Setup include — bambuddy.iss does `#include "build\staging\version.iss"`
     iss_version = STAGING / "version.iss"
-    iss_version.write_text(f'#define MyAppVersion "{version}"\n')
+    iss_version.write_text(f'#define MyAppVersion "{version}"\n', encoding="utf-8")
     log(f"staged VERSION = {version}")
 
 
