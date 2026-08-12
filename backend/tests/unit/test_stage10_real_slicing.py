@@ -3,12 +3,15 @@ from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
+import pytest
+
 from backend.app.services.production_slicer import (
     PrinterBuildVolume,
     SlicePlanningError,
     _format_real_slice_error,
     apply_build_item_layout,
     duplicate_build_items,
+    inspect_3mf,
     inspect_projected_footprint,
     inspect_slice_output,
     make_direct_sendable_sliced_output,
@@ -48,6 +51,16 @@ def _build_source_3mf() -> bytes:
     with ZipFile(out, "w", ZIP_DEFLATED) as archive:
         archive.writestr("Metadata/project_settings.config", json.dumps({"printer_model": "A1"}))
         archive.writestr("3D/3dmodel.model", model)
+    return out.getvalue()
+
+
+def _rotated_component_source_3mf() -> bytes:
+    out = BytesIO()
+    root_model = b'''<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="2" type="model"><components><component p:path="/3D/Objects/object_1.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object></resources><build><item objectid="2" transform="1 0 0 0 0 1 0 -1 0 128 128 3.9"/></build></model>'''
+    object_model = b'''<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="4" z="30"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources></model>'''
+    with ZipFile(out, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("3D/3dmodel.model", root_model)
+        archive.writestr("3D/Objects/object_1.model", object_model)
     return out.getvalue()
 
 
@@ -97,6 +110,48 @@ def test_auto_pack_duplicates_one_product_for_the_requested_plate_quantity():
         assert json.loads(archive.read("Metadata/project_settings.config"))["printer_model"] == "A1"
         model = archive.read("3D/3dmodel.model").decode()
         assert model.count("objectid=\"2\"") == 3
+
+
+def test_geometry_inspection_applies_authored_build_rotation(tmp_path):
+    source_path = tmp_path / "rotated.3mf"
+    source_path.write_bytes(_rotated_component_source_3mf())
+
+    dimensions, plate_count = inspect_3mf(source_path)
+    footprint = inspect_projected_footprint(source_path)
+
+    # The source mesh is 10 x 4 x 30, but its authored build transform turns
+    # the 30mm Z span into the bed's Y direction. Auto packing must use the
+    # transformed 10 x 30 footprint without changing that source orientation.
+    assert dimensions.width_mm == pytest.approx(10)
+    assert dimensions.depth_mm == pytest.approx(30)
+    assert dimensions.height_mm == pytest.approx(4)
+    assert plate_count == 1
+    min_x, min_y, max_x, max_y = (
+        min(point[0] for point in footprint),
+        min(point[1] for point in footprint),
+        max(point[0] for point in footprint),
+        max(point[1] for point in footprint),
+    )
+    assert max_x - min_x == pytest.approx(10)
+    assert max_y - min_y == pytest.approx(30)
+
+
+def test_layout_keeps_authored_matrix_scale_and_only_changes_translation():
+    source_io = BytesIO()
+    with ZipFile(BytesIO(_rotated_component_source_3mf()), "r") as original, ZipFile(source_io, "w", ZIP_DEFLATED) as archive:
+        for item in original.infolist():
+            content = original.read(item.filename)
+            if item.filename == "3D/3dmodel.model":
+                content = content.replace(
+                    b'transform="1 0 0 0 0 1 0 -1 0 128 128 3.9"',
+                    b'transform="1.5 0 0 0 0 1.5 0 -1.5 0 128 128 3.9"',
+                )
+            archive.writestr(item, content)
+    source = source_io.getvalue()
+    placed = apply_build_item_layout(source, [{"x_mm": 40, "y_mm": 50, "rotation_deg": 0}])
+    with ZipFile(BytesIO(placed)) as archive:
+        model = archive.read("3D/3dmodel.model").decode()
+    assert 'transform="1.5 0 0 0 0 1.5 0 -1.5 0 40 50 3.9"' in model
 
 
 def test_geometry_failure_explains_that_the_source_layout_is_outside_the_bed():

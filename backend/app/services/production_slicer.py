@@ -123,6 +123,153 @@ def _rotate_xy(point: tuple[float, float], rotation_deg: float) -> tuple[float, 
     return (point[0] * cosine - point[1] * sine, point[0] * sine + point[1] * cosine)
 
 
+_IDENTITY_TRANSFORM: tuple[float, ...] = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+
+
+def _attribute(element: ElementTree.Element, name: str) -> str | None:
+    """Read an XML attribute regardless of whether its namespace is prefixed."""
+
+    for key, value in element.attrib.items():
+        if key == name or key.rsplit("}", 1)[-1] == name:
+            return value
+    return None
+
+
+def _parse_transform(value: str | None) -> tuple[float, ...]:
+    """Parse a 3MF row-major 3x4 transform, falling back to identity."""
+
+    if not value:
+        return _IDENTITY_TRANSFORM
+    try:
+        numbers = tuple(float(item) for item in value.split())
+    except (TypeError, ValueError):
+        return _IDENTITY_TRANSFORM
+    return numbers if len(numbers) == 12 else _IDENTITY_TRANSFORM
+
+
+def _without_translation(transform: tuple[float, ...]) -> tuple[float, ...]:
+    """Keep orientation/scale while removing only the absolute XY/Z offset."""
+
+    return (*transform[:9], 0.0, 0.0, 0.0)
+
+
+def _compose_transform(parent: tuple[float, ...], child: tuple[float, ...]) -> tuple[float, ...]:
+    """Compose two row-major 3x4 transforms without introducing scaling."""
+
+    linear = tuple(
+        sum(parent[row * 3 + index] * child[index * 3 + column] for index in range(3))
+        for row in range(3)
+        for column in range(3)
+    )
+    translation = tuple(
+        sum(parent[row * 3 + index] * child[9 + index] for index in range(3)) + parent[9 + row]
+        for row in range(3)
+    )
+    return (*linear, *translation)
+
+
+def _apply_transform(transform: tuple[float, ...], point: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Apply a 3MF transform to one mesh vertex."""
+
+    return tuple(
+        sum(transform[row * 3 + index] * point[index] for index in range(3)) + transform[9 + row]
+        for row in range(3)
+    )
+
+
+@dataclass(frozen=True)
+class _ModelObjectGeometry:
+    vertices: tuple[tuple[float, float, float], ...]
+    components: tuple[tuple[str, str, tuple[float, ...]], ...]
+
+
+def _build_relative_vertices(archive: zipfile.ZipFile) -> list[tuple[float, float, float]]:
+    """Read build geometry after component and build-item orientation.
+
+    The returned points deliberately exclude each build item's absolute
+    translation.  Automatic packing supplies a new XY translation later;
+    retaining the source item's 3x3 matrix preserves its orientation and any
+    authored scale while allowing the planner to reason about the real bed
+    projection (for example, a source rotated 90 degrees around X).
+    """
+
+    model_names = [name for name in archive.namelist() if name.endswith(".model")]
+    objects: dict[tuple[str, str], _ModelObjectGeometry] = {}
+    roots: dict[str, ElementTree.Element] = {}
+    for name in model_names:
+        try:
+            root = ElementTree.fromstring(archive.read(name))
+        except ElementTree.ParseError:
+            continue
+        roots[name] = root
+        for element in root.iter():
+            if element.tag.rsplit("}", 1)[-1] != "object":
+                continue
+            object_id = _attribute(element, "id")
+            if object_id is None:
+                continue
+            vertices: list[tuple[float, float, float]] = []
+            for vertex in element.iter():
+                if vertex.tag.rsplit("}", 1)[-1] != "vertex":
+                    continue
+                try:
+                    vertices.append(
+                        (
+                            float(_attribute(vertex, "x") or ""),
+                            float(_attribute(vertex, "y") or ""),
+                            float(_attribute(vertex, "z") or ""),
+                        )
+                    )
+                except (TypeError, ValueError):
+                    continue
+            components: list[tuple[str, str, tuple[float, ...]]] = []
+            for component in element.iter():
+                if component.tag.rsplit("}", 1)[-1] != "component":
+                    continue
+                component_id = _attribute(component, "objectid")
+                if component_id is None:
+                    continue
+                component_path = (_attribute(component, "path") or name).replace("\\", "/").lstrip("/")
+                components.append((component_path, component_id, _parse_transform(_attribute(component, "transform"))))
+            objects[(name, object_id)] = _ModelObjectGeometry(tuple(vertices), tuple(components))
+
+    root_name = "3D/3dmodel.model"
+    root = roots.get(root_name)
+    if root is None:
+        raise SlicePlanningError("3MF 缺少 3D/3dmodel.model 模型文件")
+    build = next((node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "build"), None)
+    items = [node for node in list(build or []) if node.tag.rsplit("}", 1)[-1] == "item"]
+
+    def resolve(model_name: str, object_id: str, transform: tuple[float, ...], stack: set[tuple[str, str]]) -> list[tuple[float, float, float]]:
+        key = (model_name, object_id)
+        geometry = objects.get(key)
+        if geometry is None or key in stack:
+            return []
+        next_stack = {*stack, key}
+        points = [_apply_transform(transform, vertex) for vertex in geometry.vertices]
+        for component_path, component_id, component_transform in geometry.components:
+            child_path = component_path if (component_path, component_id) in objects else model_name
+            points.extend(resolve(child_path, component_id, _compose_transform(transform, component_transform), next_stack))
+        return points
+
+    points: list[tuple[float, float, float]] = []
+    for item in items:
+        object_id = _attribute(item, "objectid")
+        if object_id is None:
+            continue
+        # The planner replaces only the absolute translation.  Keep the
+        # authored 3x3 orientation (and any authored scale) for geometry.
+        points.extend(resolve(root_name, object_id, _without_translation(_parse_transform(_attribute(item, "transform"))), set()))
+    if points:
+        return points
+
+    # Some legacy 3MF files omit build references. Keep the old best-effort
+    # behavior instead of claiming that a valid archive has no geometry.
+    for geometry in objects.values():
+        points.extend(geometry.vertices)
+    return points
+
+
 def _polygon_bounds(polygon: list[tuple[float, float]]) -> tuple[float, float, float, float]:
     xs = [point[0] for point in polygon]
     ys = [point[1] for point in polygon]
@@ -157,24 +304,11 @@ def _polygons_overlap(
 
 
 def inspect_projected_footprint(path: Path) -> list[tuple[float, float]]:
-    """Read the real XY projection of the source mesh, not just its bbox."""
+    """Read the XY projection after authored 3MF orientation is applied."""
 
     try:
         with zipfile.ZipFile(path) as archive:
-            points: list[tuple[float, float]] = []
-            for name in archive.namelist():
-                if not name.endswith(".model"):
-                    continue
-                try:
-                    root = ElementTree.fromstring(archive.read(name))
-                except ElementTree.ParseError:
-                    continue
-                for element in root.iter():
-                    if element.tag.rsplit("}", 1)[-1] == "vertex":
-                        try:
-                            points.append((float(element.attrib["x"]), float(element.attrib["y"])))
-                        except (KeyError, TypeError, ValueError):
-                            continue
+            points = [(x, y) for x, y, _ in _build_relative_vertices(archive)]
             hull = _convex_hull(points)
             if len(hull) < 3:
                 raise SlicePlanningError("3MF 没有可用于摆盘的 XY 投影轮廓")
@@ -282,35 +416,11 @@ class SlicePlan:
 
 
 def inspect_3mf(path: Path) -> tuple[SourceDimensions, int]:
-    """Read model bounds and source plate count from a 3MF archive."""
+    """Read model bounds after authored 3MF orientation is applied."""
 
     try:
         with zipfile.ZipFile(path) as archive:
-            model_name = "3D/3dmodel.model"
-            if model_name not in archive.namelist():
-                raise SlicePlanningError("3MF 缺少 3D/3dmodel.model 模型文件")
-            vertices = []
-            # Bambu Studio stores the root resources in 3dmodel.model and
-            # mesh vertices in 3D/Objects/*.model. Inspect both forms.
-            model_names = [name for name in archive.namelist() if name.endswith(".model")]
-            for name in model_names:
-                try:
-                    root = ElementTree.fromstring(archive.read(name))
-                except ElementTree.ParseError:
-                    continue
-                for element in root.iter():
-                    if element.tag.rsplit("}", 1)[-1] != "vertex":
-                        continue
-                    try:
-                        vertices.append(
-                            (
-                                float(element.attrib["x"]),
-                                float(element.attrib["y"]),
-                                float(element.attrib["z"]),
-                            )
-                        )
-                    except (KeyError, TypeError, ValueError):
-                        continue
+            vertices = _build_relative_vertices(archive)
             if not vertices:
                 raise SlicePlanningError("3MF 模型没有可计算尺寸的顶点")
             xs, ys, zs = zip(*vertices, strict=True)
@@ -1060,15 +1170,11 @@ async def slice_plate_job_real(
         source_bytes = source_path.read_bytes()
         file_snapshot = requirement.recipe_snapshot.get("product_file_snapshot", {}) if requirement.recipe_snapshot else {}
         effective_strategy = "multi_plate_fixed" if file_snapshot.get("production_mode") == "multi_plate" else product_file.strategy
-        if effective_strategy == "auto_pack":
-            try:
-                layout_source_bytes = normalize_build_item_positions(source_bytes)
-            except SlicePlanningError:
-                # Keep malformed/legacy files intact so the sidecar can
-                # return its more specific validation error.
-                layout_source_bytes = source_bytes
-        else:
-            layout_source_bytes = source_bytes
+        # Auto packing rewrites only the build-item translation and the
+        # rotation around Z below. Keep the source package byte-for-byte
+        # otherwise; zeroing authored XY offsets before applying a layout can
+        # invalidate a rotated model and changes the user's source placement.
+        layout_source_bytes = source_bytes
 
         from backend.app.api.routes.settings import get_setting
 

@@ -5,7 +5,8 @@
 分支：`codex/feature-stage14-real-printer`
 
 基础实现提交：`0ffa6ef feat(stage14): add controlled real-printer dispatch`。
-本次修复提交：`85bc004 fix(stage14): auto-pack single products and dispatch eligible jobs`。
+前一项修复提交：`00d9735 fix(stage14): auto-pack single products and dispatch eligible jobs`。
+本次修复提交：`df5b844 fix(stage10): preserve rotated 3mf geometry during auto-pack`。
 
 ## 已完成
 
@@ -82,6 +83,12 @@ npm.cmd run build
 - 单盘产品的新文件上传默认使用 `auto_pack`。用户只需上传一份源 3MF；切片器会根据模型尺寸和打印机规格在一盘内安排尽可能多的套数。多盘产品仍要求每张源盘分别上传，不做跨源盘复制。
 - 真实生产订单在真实打印机在线、空闲、型号和扫码耗材匹配、切片成功后，后台会自动调用同一套真实切片发送服务，取消源文件占位队列并创建非 `manual_start` 的真实产物队列项。既有调度器继续负责上传与启动。
 - `auto_dispatch_real_slice_job` 对多个切片产物保持安全等待，因为当前 `PlateJob.queue_item_id` 只能关联一个队列项；在多盘队列模型完成前不会只发送第一盘。现有已保存为 `fixed_plate` 的历史源文件不会被静默改写，需要重新上传或选择 `auto_pack` 后新建订单。
+
+## 本次旋转模型自动摆盘修复（2026-08-12）
+
+- 旧实现只读取网格顶点的原始 X/Y；用户的 A1 源文件通过 build-item 矩阵把模型绕 X 轴旋转后，真实底面是约 `36.4 × 42.8mm`，旧算法误判为 `36.4 × 7.8mm`，写入的 Y 坐标导致模型越界，Bambu Studio 报空盘。
+- 新实现解析 3MF 根对象、组件路径和 build-item 变换后再计算投影；自动摆盘写回时只改变 XY 平移与 Z 轴朝向，不改变缩放、Z 高度、X/Y 倾斜或项目内嵌切片参数。
+- 用户本次失败的源文件已通过修复后的真实 sidecar 验证：6 套自动摆盘生成单盘 `.gcode.3mf` 成功；验证只调用切片器，没有向打印机发送。
 
 本次验证：
 
