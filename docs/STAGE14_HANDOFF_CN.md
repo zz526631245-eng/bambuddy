@@ -4,7 +4,7 @@
 
 分支：`codex/feature-stage14-real-printer`
 
-实现提交：待本阶段首次提交后补充。
+实现提交：`0ffa6ef feat(stage14): add controlled real-printer dispatch`。
 
 ## 已完成
 
