@@ -384,6 +384,40 @@ async def test_product_summary_keeps_completed_and_pending_quantities_separate(
     assert summary == {"product_id": product_id, "total_quantity": 8, "completed_quantity": 3, "pending_quantity": 5}
 
 
+async def test_product_workbench_groups_active_batches_by_product(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+):
+    master = await _master_data(async_client, db_session, "WORKBENCH-PRODUCT")
+    first = await async_client.post(
+        "/api/v1/production/orders",
+        json={"operation_id": "stage9-workbench-first", "order_number": "STAGE9-WORKBENCH-FIRST", "product_id": master["product"]["id"], "quantity": 3},
+    )
+    second = await async_client.post(
+        "/api/v1/production/orders",
+        json={"operation_id": "stage9-workbench-second", "order_number": "STAGE9-WORKBENCH-SECOND", "product_id": master["product"]["id"], "quantity": 5},
+    )
+    assert first.status_code == 201 and second.status_code == 201
+    requirements = (
+        await db_session.execute(
+            select(ProductionRequirement).where(
+                ProductionRequirement.order_id.in_([first.json()["id"], second.json()["id"]])
+            )
+        )
+    ).scalars().all()
+    requirements[0].good_quantity = 2
+    requirements[1].good_quantity = 1
+    await db_session.commit()
+
+    response = await async_client.get("/api/v1/production/product-workbench")
+    assert response.status_code == 200, response.text
+    row = next(item for item in response.json() if item["product_id"] == master["product"]["id"])
+    assert row["total_quantity"] == 8
+    assert row["completed_quantity"] == 3
+    assert row["remaining_quantity"] == 5
+    assert row["order_count"] == 2
+
+
 async def test_order_number_is_generated_when_not_supplied(
     async_client: AsyncClient,
     db_session: AsyncSession,

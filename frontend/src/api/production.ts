@@ -38,6 +38,10 @@ export interface ProductionOrderDetail extends ProductionOrder {
 }
 export interface ProductOrderSummary {
   product_id:number; total_quantity:number; completed_quantity:number; pending_quantity:number;
+  product_name?:string|null; product_sku?:string|null; remaining_quantity?:number;
+  printing_quantity?:number; assigned_quantity?:number; quality_quantity?:number; cleanup_quantity?:number;
+  scrap_quantity?:number; order_count?:number; overdue_order_count?:number; overdue?:boolean;
+  highest_priority?:number; priority_label?:string; due_at?:string|null; assigned_printer_names?:string[];
 }
 export interface SliceArtifact {
   id:number; source_product_file_id:number; source_library_file_id:number; output_library_file_id:number;
@@ -116,7 +120,7 @@ export const productionApi={
     if (params?.to_date) query.set('to_date',params.to_date);
     return request<ProductionOrder[]>('/production/orders' + (query.toString() ? `?${query}` : ''));
   },
-  listProductSummaries:()=>request<ProductOrderSummary[]>('/production/product-summaries'),
+  listProductSummaries:(workbench=false, search?:string)=>request<ProductOrderSummary[]>(workbench ? '/production/product-workbench' + (search ? '?search=' + encodeURIComponent(search) : '') : '/production/product-summaries'),
   getOrder:(id:number)=>request<ProductionOrderDetail>(`/production/orders/${id}`),
   createOrder:(data:{order_number?:string;product_id:number;product_file_id?:number|null;quantity:number;priority:number;due_at?:string|null;notes?:string|null})=>
     request<ProductionOrder>('/production/orders',{method:'POST',body:JSON.stringify({...data,operation_id:operationId('create-order')})}),

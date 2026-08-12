@@ -69,6 +69,7 @@ from backend.app.schemas.production import (
     ProductionRecipeResponse,
     ProductionRequirementResponse,
     ProductOrderSummaryResponse,
+    ProductWorkbenchSummaryResponse,
     RealPrinterDispatchRequest,
     RealPrinterDispatchResponse,
     RealSliceRequest,
@@ -101,6 +102,7 @@ from backend.app.services.production_order_service import (
     order_detail,
     preview_plate_jobs,
     product_order_summaries,
+    product_workbench_summaries,
     replan_order,
     review_slice_time,
     update_order as update_production_order,
@@ -596,6 +598,15 @@ async def list_product_order_summaries(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_READ),
 ):
     return await product_order_summaries(db)
+
+
+@router.get("/product-workbench", response_model=list[ProductWorkbenchSummaryResponse])
+async def list_product_workbench_summaries(
+    search: str | None = Query(default=None, max_length=100),
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_READ),
+):
+    return await product_workbench_summaries(db, search=search)
 
 
 @router.post("/orders", response_model=ProductionOrderResponse, status_code=status.HTTP_201_CREATED)

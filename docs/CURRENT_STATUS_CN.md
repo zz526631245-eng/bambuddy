@@ -286,6 +286,12 @@
 - QR-unit scan-in and depletion still use the existing lifecycle; successful scans invalidate the summary immediately.
 - Verification: Stage 12 consumable tests `2 passed`; backend Ruff and frontend lint/build passed.
 
+### 产品维度生产总览修正（2026-08-12）
+- 生产中心主看板改为按产品聚合，每个产品只显示一行，不再把订单批次作为主表行。
+- 新增 `/api/v1/production/product-workbench`，由后端汇总产品的总需求、已完成、剩余、打印中、已分配、待质检、待清盘、逾期批次数、最高优先级、最近交期和已分配打印机。
+- 产品行可展开查看该产品下的具体生产批次，订单详情、追加数量和历史订单入口继续保留。
+- 回归验证：Stage 8/控制/Stage 9 共 `19 passed`，前端定向测试 `32 passed`，Ruff、Lint 和前端构建通过；未构建安装包。
+
 # 生产中心订单工作台（2026-08-12）
 
 - 生产中心改为深色桌面工作台：交付总览、排产队列、打印机安排、历史订单和低频切片库在页面内切换，不再把用户带到另一个页面；当前订单以表格显示目标、已完成、剩余、打印中、待质检、打印机、优先级和交期。

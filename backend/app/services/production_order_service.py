@@ -230,6 +230,104 @@ async def product_order_summaries(db: AsyncSession) -> list[dict[str, int]]:
     ]
 
 
+async def product_workbench_summaries(
+    db: AsyncSession,
+    *,
+    search: str | None = None,
+) -> list[dict]:
+    """Return the active production workbench grouped by product.
+
+    A product can have several delivery batches.  The workbench should show
+    one row for that product while retaining the batch rows for drill-down.
+    Quantity aggregation is deliberately kept here with the order metrics so
+    the browser never becomes a second accounting implementation.
+    """
+
+    query = (
+        select(ProductionOrder)
+        .where(
+            ProductionOrder.deleted_at.is_(None),
+            ProductionOrder.status.not_in((OrderStatus.COMPLETED.value, OrderStatus.CANCELLED.value)),
+        )
+        .options(
+            selectinload(ProductionOrder.requirements)
+            .selectinload(ProductionRequirement.plate_jobs)
+            .selectinload(PlateJob.queue_item)
+            .selectinload(PrintQueueItem.printer),
+        )
+    )
+    orders = list((await db.execute(query)).scalars().unique())
+    rows: dict[int, dict] = {}
+    for order in orders:
+        metrics = _order_metrics(order)
+        snapshot = order.product_snapshot or {}
+        product_id = order.product_id
+        row = rows.setdefault(
+            product_id,
+            {
+                "product_id": product_id,
+                "product_name": snapshot.get("name"),
+                "product_sku": snapshot.get("sku"),
+                "total_quantity": 0,
+                "completed_quantity": 0,
+                "remaining_quantity": 0,
+                "printing_quantity": 0,
+                "assigned_quantity": 0,
+                "quality_quantity": 0,
+                "cleanup_quantity": 0,
+                "scrap_quantity": 0,
+                "order_count": 0,
+                "overdue_order_count": 0,
+                "overdue": False,
+                "highest_priority": int(order.priority),
+                "priority_label": priority_label(order.priority),
+                "due_at": order.due_at,
+                "assigned_printer_names": set(),
+            },
+        )
+        row["total_quantity"] += max(0, int(order.quantity))
+        for key in (
+            "completed_quantity",
+            "remaining_quantity",
+            "printing_quantity",
+            "assigned_quantity",
+            "quality_quantity",
+            "cleanup_quantity",
+            "scrap_quantity",
+        ):
+            row[key] += int(metrics[key])
+        row["order_count"] += 1
+        row["overdue_order_count"] += int(metrics["overdue"])
+        row["overdue"] = row["overdue"] or bool(metrics["overdue"])
+        if int(order.priority) > row["highest_priority"]:
+            row["highest_priority"] = int(order.priority)
+            row["priority_label"] = priority_label(order.priority)
+        if order.due_at is not None and (row["due_at"] is None or order.due_at < row["due_at"]):
+            row["due_at"] = order.due_at
+        row["assigned_printer_names"].update(metrics["assigned_printer_names"])
+
+    keyword = search.strip().casefold() if search else ""
+    result = []
+    for row in rows.values():
+        if keyword and not any(
+            keyword in str(row.get(field) or "").casefold()
+            for field in ("product_id", "product_name", "product_sku")
+        ):
+            continue
+        row["assigned_printer_names"] = sorted(row["assigned_printer_names"])
+        result.append(row)
+    result.sort(
+        key=lambda row: (
+            not row["overdue"],
+            -int(row["highest_priority"]),
+            row["due_at"] is None,
+            row["due_at"] or datetime.max,
+            str(row.get("product_name") or "").casefold(),
+        )
+    )
+    return result
+
+
 def _order_metrics(order: ProductionOrder) -> dict:
     """Build authoritative progress numbers for list/detail responses.
 

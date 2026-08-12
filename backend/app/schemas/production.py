@@ -618,6 +618,29 @@ class ProductOrderSummaryResponse(BaseModel):
     pending_quantity: int
 
 
+class ProductWorkbenchSummaryResponse(BaseModel):
+    """Current production progress aggregated by product, not by batch."""
+
+    product_id: int
+    product_name: str | None = None
+    product_sku: str | None = None
+    total_quantity: int
+    completed_quantity: int
+    remaining_quantity: int
+    printing_quantity: int
+    assigned_quantity: int
+    quality_quantity: int
+    cleanup_quantity: int
+    scrap_quantity: int
+    order_count: int
+    overdue_order_count: int
+    overdue: bool
+    highest_priority: int
+    priority_label: str
+    due_at: datetime | None = None
+    assigned_printer_names: list[str] = Field(default_factory=list)
+
+
 class PlateJobConfirmRequest(BaseModel):
     operation_id: str = Field(min_length=1, max_length=100)
     items: list[PlateJobPreviewItem] = Field(min_length=1)
