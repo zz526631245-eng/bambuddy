@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$DataRoot,
 
-    [switch]$StopOnly
+    [switch]$StopOnly,
+
+    [switch]$Interactive
 )
 
 # Bambuddy's Windows installer uses this script to make automatic slicing work
@@ -121,7 +123,7 @@ function Install-DockerDesktop {
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
         Write-Status "installing-docker" "Installing Docker Desktop through winget."
-        & $winget.Source install --id Docker.DockerDesktop --exact --silent --accept-source-agreements --accept-package-agreements
+        & $winget.Source install --id Docker.DockerDesktop --exact --silent --disable-interactivity --accept-source-agreements --accept-package-agreements
         if ($LASTEXITCODE -eq 0) {
             return
         }
@@ -130,7 +132,7 @@ function Install-DockerDesktop {
 
     $installer = Join-Path $env:TEMP "Docker Desktop Installer.exe"
     Write-Status "downloading-docker" "Downloading the official Docker Desktop installer."
-    Invoke-WebRequest -UseBasicParsing -Uri "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe" -OutFile $installer
+    Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Uri "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe" -OutFile $installer
     Write-Status "installing-docker" "Installing Docker Desktop silently."
     $process = Start-Process -FilePath $installer -ArgumentList @("install", "--quiet", "--accept-license") -Wait -PassThru -WindowStyle Hidden
     if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
@@ -251,5 +253,8 @@ try {
 catch {
     Write-Status "needs-attention" $_.Exception.Message
     Write-Output "[slicer] setup did not complete; Bambuddy itself will still be installed."
+    if ($Interactive) {
+        exit 1
+    }
     exit 0
 }

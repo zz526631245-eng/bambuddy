@@ -14,9 +14,11 @@ service. No Python or Node installation required on the target machine.
 - **Service:** registered via NSSM, runs as `LocalSystem`, autostart on boot
 - **Service command:** `python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --loop asyncio` (`--loop asyncio` avoids a uvloop TLS bug that can truncate VP FTP uploads, #1896)
 - **Bundled binaries:** Python 3.13 embeddable, NSSM, ffmpeg static build
-- **Automatic slicing:** the installer includes the slicer compose definition,
-  installs Docker Desktop when it is missing, starts the OrcaSlicer and
-  BambuStudio sidecars, and verifies their health before starting Bambuddy.
+- **Automatic slicing:** the installer includes the slicer compose definition
+  and a separate visible **Install Docker and Slicer Services** channel in the
+  Start Menu. The main Bambuddy install never waits on Docker or a large image
+  download; run that channel after installation to see progress and retry
+  safely if the network or WSL2 setup needs attention.
 - **Production build:** `VITE_PRODUCTION_BUILD=1` hides the virtual-printer test entry; the service sets `BAMBUDDY_PRODUCTION_BUILD=1`.
 - **First install:** `service\prepare-clean-data.bat` creates an empty data directory. An existing data directory is moved to `previous-data-<timestamp>` and is not loaded. The `.fresh-install-complete` marker prevents later upgrades from resetting production data.
 
@@ -87,12 +89,13 @@ as a release asset.
 - **Spoolman:** explicitly NOT bundled in v1. Users who want Spoolman
   install it separately. Bambuddy internal-inventory mode is the default
   on Windows.
-- **Slicer sidecar:** on first install, `service\setup-slicer.ps1` uses the
+- **Slicer sidecar:** the Start Menu setup channel runs
+  `service\install-slicer.bat`, which calls `setup-slicer.ps1` and uses the
   official Docker Desktop package (winget first, official download fallback),
   pulls the OrcaSlicer/BambuStudio API images, and starts them on ports 3003
   and 3001. The status is written to
   `C:\ProgramData\Bambuddy\slicer\setup-status.txt`; a Start Menu shortcut
-  named **Bambuddy Slicer Setup** can safely retry the setup. Docker Desktop
+  named **Install Docker and Slicer Services** can safely retry the setup. Docker Desktop
   may request one Windows restart or WSL2 initialization; the installer
   registers a RunOnce continuation so setup resumes after the next login.
   The compose stack and its data are kept on uninstall (containers are

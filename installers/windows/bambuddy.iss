@@ -95,7 +95,7 @@ Name: "{commonappdata}\Bambuddy\logs"; Permissions: users-modify
 
 [Icons]
 Name: "{group}\Open Bambuddy Dashboard"; Filename: "http://localhost:{#DefaultPort}"; IconFilename: "{app}\bambuddy.ico"
-Name: "{group}\Bambuddy Slicer Setup"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service\setup-slicer.ps1"" -InstallDir ""{app}"" -DataRoot ""{commonappdata}\Bambuddy"""; WorkingDir: "{app}"; IconFilename: "{app}\bambuddy.ico"
+Name: "{group}\Install Docker and Slicer Services"; Filename: "{app}\service\install-slicer.bat"; WorkingDir: "{app}"; IconFilename: "{app}\bambuddy.ico"
 Name: "{group}\Bambuddy Logs"; Filename: "{commonappdata}\Bambuddy\logs"
 Name: "{group}\Uninstall Bambuddy"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\Bambuddy"; Filename: "http://localhost:{#DefaultPort}"; IconFilename: "{app}\bambuddy.ico"; Tasks: desktopicon
@@ -106,10 +106,9 @@ Name: "{commondesktop}\Bambuddy"; Filename: "http://localhost:{#DefaultPort}"; I
 ; never loaded by the new instance; upgrades after the marker preserve data.
 Filename: "{app}\service\prepare-clean-data.bat"; Parameters: """{commonappdata}\Bambuddy"""; Flags: runhidden waituntilterminated; StatusMsg: "Preparing a clean production data directory..."
 
-; Install Docker Desktop if needed, start both slicer sidecars, and wait for
-; their health endpoints. The script is intentionally non-blocking on failure:
-; Bambuddy can still open and the setup status is saved under ProgramData.
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service\setup-slicer.ps1"" -InstallDir ""{app}"" -DataRoot ""{commonappdata}\Bambuddy"""; Flags: runhidden waituntilterminated; StatusMsg: "Installing and starting automatic slicing service..."
+; Slicer setup is intentionally a separate visible channel. The main app
+; install must finish even when Docker or the first image download needs
+; attention; use the Start Menu entry above to run this step with progress.
 
 ; Register and start the Windows service
 Filename: "{app}\service\install-service.bat"; Parameters: """{app}"" ""{commonappdata}\Bambuddy"" {#DefaultPort}"; Flags: runhidden waituntilterminated; StatusMsg: "Registering Bambuddy service..."
