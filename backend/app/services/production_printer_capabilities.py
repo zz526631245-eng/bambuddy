@@ -92,6 +92,28 @@ def match_filament_requirements(
         if isinstance(item, dict)
     }
 
+    def loaded_for_slot(slot: int) -> dict[str, Any] | None:
+        """Resolve a product slot against AMS and direct-feed snapshots.
+
+        Product 3MF metadata normally numbers its first filament slot as 0.
+        The direct-feed consumable contract stores the external tray as slot
+        254, while AMS telemetry uses its physical slot number.  A single
+        direct-feed spool is therefore an unambiguous fallback for slot 0;
+        multi-slot AMS snapshots still require an exact slot match.
+        """
+
+        loaded = loaded_by_slot.get(slot)
+        if loaded is not None:
+            return loaded
+        if slot != 0:
+            return None
+        direct_feed = [item for key, item in loaded_by_slot.items() if key in {254, -1}]
+        if len(direct_feed) == 1:
+            return direct_feed[0]
+        if len(loaded_by_slot) == 1:
+            return next(iter(loaded_by_slot.values()))
+        return None
+
     for index, requirement in enumerate(requirements):
         if not isinstance(requirement, dict):
             continue
@@ -104,7 +126,7 @@ def match_filament_requirements(
         if expected_color and supported_colors and expected_color not in supported_colors:
             return FilamentMatchResult(False, "color_not_supported", slot)
 
-        loaded = loaded_by_slot.get(slot)
+        loaded = loaded_for_slot(slot)
         if loaded is None:
             return FilamentMatchResult(False, "filament_not_loaded", slot)
         actual_material = normalize_material(loaded.get("material") or loaded.get("tray_type"))

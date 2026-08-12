@@ -48,6 +48,16 @@ class TestGuessModelContentType:
         assert _guess_model_content_type("foo.bar") == "application/octet-stream"
 
 
+class TestSlicerApiEndpoint:
+    def test_normalizes_localhost_to_ipv4_loopback(self):
+        service = SlicerApiService("http://localhost:3001")
+        assert service.base_url == "http://127.0.0.1:3001"
+
+    def test_keeps_remote_sidecar_hostname(self):
+        service = SlicerApiService("http://bambu-studio-api:3001")
+        assert service.base_url == "http://bambu-studio-api:3001"
+
+
 class TestSliceWithProfiles:
     @pytest.mark.asyncio
     async def test_happy_path_returns_gcode_and_metadata(self):

@@ -68,6 +68,24 @@ npm.cmd run build
 # passed
 ```
 
+## 本次真实生产修复（2026-08-12）
+
+- 自动分配会刷新真实 A1 的 MQTT 状态，并以扫码耗材快照作为材料/颜色匹配依据；直供槽位 254 与产品槽位 0 的单槽需求可以正确匹配，旧阶段 11 虚拟配置不会再错误阻塞真实 PETG/白色打印机。
+- 当同型号真实打印机已配置但离线、忙碌或耗材不匹配时，任务保持待分配，不会静默回退到虚拟测试机；虚拟回退仅保留给没有同型号真实设备的显式软件测试场景。
+- 订单确认和后台分配都已接入真实切片；固定盘数量拆分时，重复调用单盘 3MF 始终传入源盘 `plate=0`，不再把第 2 个成品误当作源盘 2。
+- Windows 原生切片 sidecar 的 `localhost` 已统一转为 IPv4 回环地址；重排队后的分配日志使用唯一事件 ID，避免 SQLite 唯一键冲突导致分配回滚。
+- 当前实测订单 3 已自动分配到真实 `A1-1`，PETG/白色匹配，真实切片成功生成 6 个 `.gcode.3mf` 产物并保持在待打印队列；本次未发送打印命令。
+
+本次验证：
+
+```powershell
+python -m pytest backend/tests/unit/test_production_printer_capabilities.py backend/tests/unit/test_stage10_slicer.py backend/tests/integration/test_stage9_production_allocation.py backend/tests/integration/test_stage10_slicing.py backend/tests/integration/test_stage14_real_printer_dispatch.py -q
+# 26 passed
+
+ruff check backend/app/services/production_allocator.py backend/app/services/production_eligibility.py backend/app/services/production_printer_capabilities.py backend/app/services/production_printer_status.py backend/app/services/production_slicer.py backend/app/services/slicer_api.py
+# All checks passed
+```
+
 ## 未完成、风险与下一步
 
 - 尚未进行一台真实打印机的人工验收；首次验收必须使用无关紧要的测试模型并有人在机器旁。

@@ -212,3 +212,10 @@
 - 真实打印机确认登记前会读取已连接 MQTT 快照中的外部料槽料型作安全校验：扫描颜色不同但料型相同的耗材允许登记；扫描 `PLA`、`PETG`、`TPU` 等与设备料型不一致的耗材会拒绝登记，并提示先在打印机或 Bambu Studio 中调整设备料型。
 - 打印机离线或未回传外部料型时拒绝登记；该检查不会建立新连接、不会自动写入实体打印机，也不会发送打印。扫码页面会直接显示中文错误原因。
 - 回归：Stage 12/13/14 后端定向 `14 passed`；Ruff 通过；打印机页面前端定向 `61 passed`；前端生产构建通过。
+### Real production allocation and slicing fix (2026-08-12)
+
+- Real-printer allocation now refreshes the connected device status and matches model, scanned material/colour, and queue occupancy. Direct-feed slot 254 is accepted for a single-slot product requirement.
+- Confirmed real jobs use the existing real print queue and real slicer; virtual jobs remain simulation-only. Both paths keep explicit human dispatch confirmation and never send a print command automatically.
+- Fixed quantity splitting so every repeated one-plate 3MF is sent to the sidecar as source plate 0. Fixed Windows native sidecar access by normalizing localhost to IPv4 loopback, and made reallocation operation IDs unique.
+- Live verification: order 3 auto-assigned to real printer A1-1 with PETG/white, produced six real `.gcode.3mf` plate artifacts, and remains held in the print queue. No print was dispatched.
+- Focused backend regression: 26 passed; slicer endpoint/plate-index regression: 15 passed; Ruff, frontend build and lint passed. Existing unrelated frontend full-suite failures remain documented.

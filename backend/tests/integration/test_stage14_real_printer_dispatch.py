@@ -7,6 +7,7 @@ send anything to a physical printer.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,137 @@ from backend.app.models.product_file import ProductFile
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.virtual_printer import VirtualPrinter
+
+
+async def test_real_assignment_uses_scanned_direct_feed_over_stale_virtual_profile(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A legacy virtual profile must not block a matching real direct-feed spool."""
+
+    from backend.app.services.production_eligibility import find_assignment
+
+    printer, _artifact, job, held_queue = await _real_slice_fixture(db_session, tmp_path)
+    printer.loaded_filaments = [{"slot": 254, "material": "PETG", "color": "#FFFFFF"}]
+    held_queue.status = "cancelled"
+    job.queue_item_id = None
+    job.status = "draft"
+    profile = PrinterProfile(
+        code="STALE-VIRTUAL-A1",
+        name="阶段11虚拟 A1 配置",
+        printer_model="A1",
+        nozzle_diameter=0.4,
+        location="虚拟测试区",
+        auto_production_enabled=True,
+        supported_materials=["PLA"],
+        supported_colors=["#FF0000"],
+    )
+    db_session.add(profile)
+    await db_session.flush()
+    job.printer_profile_id = profile.id
+    requirement = await db_session.get(ProductionRequirement, job.requirement_id)
+    assert requirement is not None
+    requirement.recipe_snapshot = {
+        "printer_profile_id": profile.id,
+        "library_file_id": 1,
+        "product_file_snapshot": {
+            "compatible_printer_models": [],
+            "filament_requirements": [{"slot": 0, "material": "PETG", "color": "白色"}],
+        },
+    }
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "backend.app.services.production_printer_status.printer_manager.get_status",
+        lambda _printer_id: SimpleNamespace(
+            connected=True,
+            state="IDLE",
+            progress=0,
+            remaining_time=0,
+            layer_num=0,
+            total_layers=0,
+            gcode_file="",
+            subtask_name="",
+        ),
+    )
+
+    assignment = await find_assignment(db_session, job)
+
+    assert assignment is not None
+    assert assignment.printer is not None
+    assert assignment.printer.id == printer.id
+    assert assignment.virtual_printer is None
+
+
+async def test_confirmed_real_job_runs_real_slice_instead_of_virtual_slice(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Confirmation must select the real-slice adapter for a real assignment."""
+
+    printer, _artifact, old_job, held_queue = await _real_slice_fixture(db_session, tmp_path)
+    printer.loaded_filaments = [{"slot": 254, "material": "PETG", "color": "#FFFFFF"}]
+    held_queue.status = "cancelled"
+    profile = PrinterProfile(
+        code="REAL-CONFIRM-A1",
+        name="真实生产 A1",
+        printer_model="A1",
+        nozzle_diameter=0.4,
+        location="虚拟测试区",
+        auto_production_enabled=True,
+        supported_materials=["PLA"],
+        supported_colors=["#FF0000"],
+    )
+    db_session.add(profile)
+    await db_session.flush()
+    requirement = await db_session.get(ProductionRequirement, old_job.requirement_id)
+    assert requirement is not None
+    requirement.recipe_snapshot = {
+        "printer_profile_id": profile.id,
+        "library_file_id": 1,
+        "product_file_snapshot": {
+            "library_file_id": 1,
+            "strategy": "fixed_plate",
+            "units_per_plate": 1,
+            "compatible_printer_models": [],
+            "filament_requirements": [{"slot": 0, "material": "PETG", "color": "白色"}],
+        },
+    }
+    await db_session.commit()
+    old_job.status = "completed"
+    await db_session.commit()
+
+    sliced_ids: list[int] = []
+
+    async def fake_real_slice(db: AsyncSession, plate_job_id: int, **_kwargs):
+        job = await db.get(PlateJob, plate_job_id)
+        assert job is not None
+        sliced_ids.append(plate_job_id)
+        job.slice_status = "succeeded"
+        job.slice_result = {"real_slice": True, "simulation_only": False}
+        await db.commit()
+        await db.refresh(job)
+        return job
+
+    monkeypatch.setattr("backend.app.api.routes.production.slice_plate_job_real", fake_real_slice)
+
+    preview = await async_client.get(f"/api/v1/production/orders/{requirement.order_id}/plate-jobs/preview")
+    assert preview.status_code == 200, preview.text
+    confirmed = await async_client.post(
+        f"/api/v1/production/orders/{requirement.order_id}/plate-jobs/confirm",
+        json={"operation_id": "real-confirmation-flow", "items": preview.json()["items"]},
+    )
+
+    assert confirmed.status_code == 201, confirmed.text
+    job = confirmed.json()["items"][0]
+    assert job["virtual_printer_id"] is None
+    assert job["queue_item_id"] is not None
+    assert job["slice_status"] == "succeeded"
+    assert job["slice_result"]["real_slice"] is True
+    assert sliced_ids == [job["id"]]
 
 
 async def _real_slice_fixture(db: AsyncSession, tmp_path: Path):

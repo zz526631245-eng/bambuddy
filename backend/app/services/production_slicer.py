@@ -26,6 +26,8 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.core.config import settings
 from backend.app.models.library import LibraryFile
+from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.printer import Printer
 from backend.app.models.product_file import ProductFile
 from backend.app.models.production import PlateJob
 from backend.app.models.slice_artifact import SliceArtifact
@@ -62,6 +64,34 @@ class SliceOutputInspection:
     plate_count: int
     plate_names: tuple[str, ...]
     xy_bounds_mm: tuple[float, float, float, float] | None = None
+
+
+def _printer_identity(model: str | None) -> tuple[str, str] | None:
+    """Return the Bambu Studio printer identity for a Bambuddy model code."""
+
+    normalized = "".join(str(model or "").upper().split())
+    return {
+        "A1": ("Bambu Lab A1", "Bambu Lab A1 0.4 nozzle"),
+        "A1MINI": ("Bambu Lab A1 mini", "Bambu Lab A1 mini 0.4 nozzle"),
+        "A1M": ("Bambu Lab A1 mini", "Bambu Lab A1 mini 0.4 nozzle"),
+        "A2L": ("Bambu Lab A2L", "Bambu Lab A2L 0.4 nozzle"),
+        "N2S": ("Bambu Lab A1", "Bambu Lab A1 0.4 nozzle"),
+        "N1": ("Bambu Lab A1 mini", "Bambu Lab A1 mini 0.4 nozzle"),
+        "N9": ("Bambu Lab A2L", "Bambu Lab A2L 0.4 nozzle"),
+    }.get(normalized)
+
+
+def _printer_build_volume(model: str | None) -> PrinterBuildVolume:
+    """Use a conservative build volume when a real printer has no VP fields."""
+
+    normalized = "".join(str(model or "").upper().split())
+    if normalized in {"A1MINI", "A1M", "N1"}:
+        return PrinterBuildVolume(width_mm=180, depth_mm=180, height_mm=180)
+    if normalized in {"A1", "N2S"}:
+        return PrinterBuildVolume(width_mm=256, depth_mm=256, height_mm=256)
+    if normalized in {"A2L", "N9"}:
+        return PrinterBuildVolume(width_mm=256, depth_mm=256, height_mm=250)
+    return PrinterBuildVolume(width_mm=256, depth_mm=256, height_mm=250)
 
 
 def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -306,6 +336,33 @@ def inspect_3mf(path: Path) -> tuple[SourceDimensions, int]:
         raise
     except (OSError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
         raise SlicePlanningError(f"无法读取 3MF 源文件：{exc}") from exc
+
+
+def _sidecar_plate_index(path: Path, requested_index: int | None) -> int:
+    """Map a Bambuddy source-plate index to the sidecar's zero-based index.
+
+    A quantity split can submit the same one-plate source file several times.
+    Passing the quantity index (1, 2, ...) as ``plate`` makes Bambu Studio
+    reject the request because that index is not a plate in the source 3MF.
+    When the source archive contains only one plate, always use zero; for a
+    genuine multi-plate archive retain the requested zero-based index when it
+    is in range.
+    """
+
+    requested = max(0, int(requested_index or 0))
+    try:
+        with zipfile.ZipFile(path) as archive:
+            plate_indexes = {
+                int(match.group(1))
+                for name in archive.namelist()
+                if (match := re.fullmatch(r"Metadata/plate_(\d+)\.png", name))
+            }
+    except (OSError, zipfile.BadZipFile):
+        return requested
+    plate_count = len(plate_indexes)
+    if plate_count <= 1:
+        return 0
+    return requested if requested < plate_count else 0
 
 
 def _validate_dimensions(source: SourceDimensions, printer: PrinterBuildVolume) -> None:
@@ -961,6 +1018,11 @@ async def slice_plate_job_real(
     requirement = job.requirement
     product_file = await _job_source_product_file(db, job)
     assigned_virtual = await db.get(VirtualPrinter, job.virtual_printer_id) if job.virtual_printer_id else None
+    assigned_printer = None
+    if job.queue_item_id is not None:
+        queue_item = await db.get(PrintQueueItem, job.queue_item_id)
+        if queue_item is not None:
+            assigned_printer = await db.get(Printer, queue_item.printer_id)
     library_file = await db.get(LibraryFile, product_file.library_file_id) if product_file else None
     source_path = _absolute_library_path(library_file.file_path if library_file else None)
     try:
@@ -974,16 +1036,26 @@ async def slice_plate_job_real(
         # Use the printer selected by the allocator unless the caller
         # explicitly overrides it. This keeps the real slice tied to the
         # assigned A1/A2L target instead of the source file's model.
-        if target_printer_model is None and assigned_virtual is not None:
-            assigned_identity = {
-                "N2S": ("Bambu Lab A1", "Bambu Lab A1 0.4 nozzle"),
-                "N1": ("Bambu Lab A1 mini", "Bambu Lab A1 mini 0.4 nozzle"),
-                "N9": ("Bambu Lab A2L", "Bambu Lab A2L 0.4 nozzle"),
-            }.get(assigned_virtual.model or "")
+        if target_printer_model is None:
+            assigned_identity = _printer_identity(
+                assigned_virtual.model if assigned_virtual is not None else assigned_printer.model
+                if assigned_printer is not None
+                else None
+            )
             if assigned_identity:
                 target_printer_model, default_preset = assigned_identity
                 if target_printer_preset is None:
                     target_printer_preset = default_preset
+
+        target_volume = (
+            PrinterBuildVolume(
+                width_mm=assigned_virtual.build_width_mm,
+                depth_mm=assigned_virtual.build_depth_mm,
+                height_mm=assigned_virtual.build_height_mm,
+            )
+            if assigned_virtual is not None
+            else _printer_build_volume(assigned_printer.model if assigned_printer is not None else target_printer_model)
+        )
 
         source_bytes = source_path.read_bytes()
         file_snapshot = requirement.recipe_snapshot.get("product_file_snapshot", {}) if requirement.recipe_snapshot else {}
@@ -1020,7 +1092,15 @@ async def slice_plate_job_real(
         digest = sha256(source_bytes).hexdigest()
         plate_quantities = [job.planned_quantity]
         layout_plan = None
-        if effective_strategy == "auto_pack" and assigned_virtual is not None:
+        if effective_strategy == "fixed_plate":
+            units_per_plate = max(1, int(product_file.units_per_plate))
+            plate_quantities = []
+            remaining = job.planned_quantity
+            while remaining > 0:
+                current = min(units_per_plate, remaining)
+                plate_quantities.append(current)
+                remaining -= current
+        if effective_strategy == "auto_pack":
             try:
                 source_dimensions, source_plate_count = inspect_3mf(source_path)
             except SlicePlanningError:
@@ -1036,11 +1116,7 @@ async def slice_plate_job_real(
                     requested_quantity=job.planned_quantity,
                     configured_units_per_plate=float(product_file.units_per_plate),
                     source=source_dimensions,
-                    printer=PrinterBuildVolume(
-                        width_mm=assigned_virtual.build_width_mm,
-                        depth_mm=assigned_virtual.build_depth_mm,
-                        height_mm=assigned_virtual.build_height_mm,
-                    ),
+                    printer=target_volume,
                     source_plate_count=source_plate_count,
                     projected_footprint=projected_footprint,
                 )
@@ -1124,7 +1200,14 @@ async def slice_plate_job_real(
                     result = await slicer.slice_without_profiles(
                     model_bytes=model_bytes,
                     model_filename=library_file.filename,
-                    plate=source_plate_index if source_plate_index is not None else plate_index,
+                    # ``plate`` addresses a source 3MF plate, not the
+                    # quantity-split output index.  A one-plate source is
+                    # therefore always plate 0 even when six output plates
+                    # are generated for a six-unit order.
+                    plate=_sidecar_plate_index(
+                        source_path,
+                        source_plate_index if source_plate_index is not None else 0,
+                    ),
                     export_3mf=True,
                     arrange=arrange,
                 )
@@ -1136,14 +1219,7 @@ async def slice_plate_job_real(
                     )
                     result = result._replace(content=make_direct_sendable_sliced_output(result.content))
                     try:
-                        inspection = inspect_slice_output(
-                            result.content,
-                            PrinterBuildVolume(
-                                width_mm=assigned_virtual.build_width_mm if assigned_virtual else 256,
-                                depth_mm=assigned_virtual.build_depth_mm if assigned_virtual else 256,
-                                height_mm=assigned_virtual.build_height_mm if assigned_virtual else 250,
-                            ),
-                        )
+                        inspection = inspect_slice_output(result.content, target_volume)
                     except SlicePlanningError:
                         if effective_strategy == "auto_pack" and plate_quantity > 1:
                             plate_quantities[plate_index] = plate_quantity - 1

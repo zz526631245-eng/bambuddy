@@ -1,11 +1,23 @@
+import zipfile
+
 import pytest
 
 from backend.app.services.production_slicer import (
     PrinterBuildVolume,
     SlicePlanningError,
     SourceDimensions,
+    _sidecar_plate_index,
     plan_slice,
 )
+
+
+def test_sidecar_plate_index_reuses_single_source_plate_for_quantity_split(tmp_path):
+    source = tmp_path / "one-plate.3mf"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("Metadata/plate_1.png", b"png")
+
+    assert _sidecar_plate_index(source, 0) == 0
+    assert _sidecar_plate_index(source, 5) == 0
 
 
 def test_auto_pack_capacity_changes_with_virtual_printer_size():

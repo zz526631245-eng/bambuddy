@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.models.operation_log import OperationLog
 from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.printer import Printer
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product import Product
 from backend.app.models.product_file import ProductFile
@@ -881,6 +882,11 @@ async def order_detail(db: AsyncSession, order_id: int) -> dict:
         item.id: item
         for item in list((await db.execute(select(PrintQueueItem).where(PrintQueueItem.id.in_(queue_ids)))).scalars())
     } if queue_ids else {}
+    printer_ids = {item.printer_id for item in queue_items.values() if item.printer_id is not None}
+    printers = {
+        printer.id: printer
+        for printer in list((await db.execute(select(Printer).where(Printer.id.in_(printer_ids)))).scalars())
+    } if printer_ids else {}
     requirements = []
     for requirement in order.requirements:
         ledger = calculate_ledger(
@@ -920,6 +926,17 @@ async def order_detail(db: AsyncSession, order_id: int) -> dict:
                         else None,
                         "printer_model": profiles[job.printer_profile_id].printer_model
                         if job.printer_profile_id in profiles
+                        else None,
+                        "assigned_printer_id": queue_items[job.queue_item_id].printer_id
+                        if job.queue_item_id in queue_items
+                        else None,
+                        "assigned_printer_name": printers[queue_items[job.queue_item_id].printer_id].name
+                        if job.queue_item_id in queue_items
+                        and queue_items[job.queue_item_id].printer_id in printers
+                        else None,
+                        "assigned_printer_model": printers[queue_items[job.queue_item_id].printer_id].model
+                        if job.queue_item_id in queue_items
+                        and queue_items[job.queue_item_id].printer_id in printers
                         else None,
                         "virtual_printer_name": virtual_printers[job.virtual_printer_id].name
                         if job.virtual_printer_id in virtual_printers

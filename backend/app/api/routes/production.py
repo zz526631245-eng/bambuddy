@@ -658,10 +658,14 @@ async def confirm_order_plate_jobs(
     except ProductionOrderError as exc:
         raise HTTPException(409, str(exc)) from exc
     await allocate_plate_jobs(db, plate_job_ids=[job.id for job in jobs])
-    # Stage 10 performs a deterministic, simulation-only slice after a virtual
-    # printer has been selected. Real printer dispatch remains blocked.
+    # Slice against the assigned target.  Virtual jobs retain the deterministic
+    # simulation path; a real printer job uses the configured Bambu/Orca
+    # sidecar and remains held until the explicit Stage 14 dispatch confirmation.
     for job in jobs:
-        await slice_plate_job(db, job.id)
+        if job.virtual_printer_id is not None:
+            await slice_plate_job(db, job.id)
+        elif job.queue_item_id is not None:
+            await slice_plate_job_real(db, job.id)
     jobs = list(
         (
             await db.execute(

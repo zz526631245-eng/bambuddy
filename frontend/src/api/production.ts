@@ -5,7 +5,7 @@ export interface QuantityLedger {
 }
 export interface PlateJob {
   id:number; requirement_id:number; printer_profile_id?:number|null; virtual_printer_id?:number|null; queue_item_id?:number|null;
-  printer_profile_name?:string|null; printer_model?:string|null; virtual_printer_name?:string|null; queue_status?:string|null;
+  printer_profile_name?:string|null; printer_model?:string|null; assigned_printer_id?:number|null; assigned_printer_name?:string|null; assigned_printer_model?:string|null; virtual_printer_name?:string|null; queue_status?:string|null;
   planned_quantity:number; status:string; workflow_status?:string; machine_result?:'completed'|'failed'|null;
   quality_good_quantity?:number|null; quality_scrap_quantity?:number|null;
   print_started_at?:string|null; print_finished_at?:string|null; quality_confirmed_at?:string|null; cleanup_confirmed_at?:string|null;

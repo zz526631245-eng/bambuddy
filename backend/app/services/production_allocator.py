@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.production import OrderStatus, PlateJob, PlateJobStatus, ProductionRequirement
 from backend.app.services.production_eligibility import find_assignment
 from backend.app.services.production_printer_status import availability
+from backend.app.services.production_slicer import slice_plate_job_real
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ async def _requeue_unavailable_assignments(db: AsyncSession) -> int:
         job.status = PlateJobStatus.DRAFT.value
         db.add(
             OperationLog(
-                operation_id=f"stage13-requeue-plate-job-{job.id}",
+                operation_id=f"stage13-requeue-plate-job-{job.id}-{uuid4().hex}",
                 operation_type="stage13_printer_unavailable_requeued",
                 entity_type="production_order",
                 entity_id=job.requirement.order_id,
@@ -113,7 +115,7 @@ async def _allocate(db: AsyncSession, plate_job_ids: Sequence[int] | None, limit
             job.status = PlateJobStatus.ASSIGNED.value
             db.add(
                 OperationLog(
-                    operation_id=f"stage9-allocate-virtual-plate-job-{job.id}",
+                    operation_id=f"stage9-allocate-virtual-plate-job-{job.id}-{uuid4().hex}",
                     operation_type="production_plate_job_allocated",
                     entity_type="production_order",
                     entity_id=job.requirement.order_id,
@@ -152,7 +154,7 @@ async def _allocate(db: AsyncSession, plate_job_ids: Sequence[int] | None, limit
         job.status = PlateJobStatus.ASSIGNED.value
         db.add(
             OperationLog(
-                operation_id=f"stage9-allocate-plate-job-{job.id}",
+                operation_id=f"stage9-allocate-plate-job-{job.id}-{uuid4().hex}",
                 operation_type="production_plate_job_allocated",
                 entity_type="production_order",
                 entity_id=job.requirement.order_id,
@@ -161,7 +163,7 @@ async def _allocate(db: AsyncSession, plate_job_ids: Sequence[int] | None, limit
                     "queue_item_id": queue_item.id,
                     "printer_id": assignment.printer.id,
                     "printer_profile_id": assignment.profile.id,
-                    "simulation_only": True,
+                    "simulation_only": False,
                 },
             )
         )
@@ -201,11 +203,14 @@ class ProductionAllocator:
 
     async def run(self) -> None:
         self._running = True
-        logger.info("Production allocator started in stage 9 simulation-only mode")
+        logger.info("Production allocator started with real-printer allocation and held dispatch")
         while self._running:
             try:
                 async with async_session() as db:
-                    await allocate_plate_jobs(db)
+                    allocated = await allocate_plate_jobs(db)
+                    for job in allocated:
+                        if job.virtual_printer_id is None and job.queue_item_id is not None:
+                            await slice_plate_job_real(db, job.id)
             except Exception:
                 logger.exception("Production allocator pass failed")
             await asyncio.sleep(self.interval_seconds)

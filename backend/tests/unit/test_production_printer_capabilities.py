@@ -51,3 +51,19 @@ def test_empty_loaded_state_is_not_treated_as_a_match_for_required_filament():
 
     assert result.matched is False
     assert result.reason == "filament_not_loaded"
+
+
+def test_direct_feed_slot_254_matches_single_slot_product_requirement():
+    """Direct-feed scans use slot 254 while product files use slot zero."""
+
+    result = match_filament_requirements(
+        [{"slot": 0, "material": "PETG", "color": "#FFFFFF"}],
+        PrinterCapabilities(
+            supported_materials=(),
+            supported_colors=(),
+            loaded_filaments=({"slot": 254, "material": "PETG", "color": "#FFFFFF"},),
+        ),
+    )
+
+    assert result.matched is True
+    assert result.reason is None

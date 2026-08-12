@@ -352,6 +352,9 @@ class PlateJobResponse(_FromAttributes):
     virtual_printer_id: int | None = None
     printer_profile_name: str | None = None
     printer_model: str | None = None
+    assigned_printer_id: int | None = None
+    assigned_printer_name: str | None = None
+    assigned_printer_model: str | None = None
     virtual_printer_name: str | None = None
     queue_status: str | None = None
     planned_quantity: int

@@ -12,6 +12,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from typing import NamedTuple
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -48,6 +49,28 @@ class SliceResult(NamedTuple):
 
 
 _shared_http_client: httpx.AsyncClient | None = None
+
+
+def _normalize_localhost_url(base_url: str) -> str:
+    """Use IPv4 loopback for local sidecars on Windows/native installs.
+
+    The bundled slicer sidecars listen on 127.0.0.1.  On some Windows
+    installations ``httpx`` resolves ``localhost`` to an IPv6 endpoint first,
+    which produces an empty ``ReadError`` even though the sidecar is healthy.
+    Keep container/remote hostnames untouched and only normalize the literal
+    localhost hostname.
+    """
+
+    try:
+        parsed = urlsplit(base_url)
+    except ValueError:
+        return base_url
+    if parsed.hostname != "localhost":
+        return base_url
+    host = "127.0.0.1"
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
 
 
 def _format_sidecar_error(response: httpx.Response) -> str:
@@ -101,7 +124,7 @@ class SlicerApiService:
         client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 300.0,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _normalize_localhost_url(base_url.rstrip("/"))
         self.timeout_seconds = timeout_seconds
         if client is not None:
             self._client = client

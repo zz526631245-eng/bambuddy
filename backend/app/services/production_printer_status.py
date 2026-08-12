@@ -232,6 +232,15 @@ async def heartbeat(db: AsyncSession, payload: PrinterStatusHeartbeat) -> dict:
 
 
 async def availability(db: AsyncSession, target_type: str, target_id: int) -> bool:
+    if target_type == "printer":
+        # The MQTT adapter is owned by PrinterManager.  Refresh the persisted
+        # production snapshot at the point where allocation/dispatch asks for
+        # availability, so a healthy connected printer is not rejected merely
+        # because the status page has not been opened in the last 30 seconds.
+        printer = await db.get(Printer, target_id)
+        if printer is not None:
+            if await _sync_real_printer_status(db, printer):
+                await db.flush()
     row = await db.scalar(
         select(ProductionPrinterStatus).where(
             ProductionPrinterStatus.target_key == target_key(target_type, target_id)
