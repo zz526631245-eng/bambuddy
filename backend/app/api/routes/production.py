@@ -4,16 +4,18 @@ Routes never communicate with a printer transport directly; eligible real
 jobs hand off to Bambuddy's existing queue and scheduler.
 """
 
+import io
 import logging
 from datetime import date, datetime, time, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.app.api.routes.settings import get_setting
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
@@ -33,6 +35,7 @@ from backend.app.models.user import User
 from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import (
     ConsumableBatchCreate,
+    ConsumableBatchHistoryResponse,
     ConsumableBatchResponse,
     ConsumableConsumptionSummary,
     ConsumableInventoryGroup,
@@ -80,7 +83,9 @@ from backend.app.services.production_allocator import allocate_plate_jobs
 from backend.app.services.production_consumable_library import (
     create_batch,
     inventory_summary,
+    list_batch_history,
     list_units,
+    render_batch_pdf,
     scan_unit,
     summary,
     summary_by_material_type,
@@ -119,6 +124,7 @@ from backend.app.services.production_slicer import (
     slice_plate_job,
     slice_plate_job_real,
 )
+from backend.app.utils.http import build_content_disposition
 
 router = APIRouter(prefix="/production", tags=["production"])
 logger = logging.getLogger(__name__)
@@ -155,26 +161,29 @@ async def post_production_printer_heartbeat(
 @router.get("/consumable-library", response_model=list[ConsumableUnitResponse])
 async def list_consumable_library(
     status_filter: str | None = None,
+    include_pending: bool = False,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
-    return await list_units(db, status=status_filter)
+    return await list_units(db, status=status_filter, include_pending=include_pending)
 
 
 @router.get("/consumable-library/summary", response_model=ConsumableLibrarySummary)
 async def get_consumable_library_summary(
+    include_pending: bool = True,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
-    return await summary(db)
+    return await summary(db, include_pending=include_pending)
 
 
 @router.get("/consumable-library/inventory-summary", response_model=list[ConsumableInventoryGroup])
 async def get_consumable_inventory_summary(
+    include_pending: bool = True,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
-    return await inventory_summary(db)
+    return await inventory_summary(db, include_pending=include_pending)
 
 
 @router.get("/consumable-library/consumption-summary", response_model=ConsumableConsumptionSummary)
@@ -191,6 +200,16 @@ async def get_consumable_consumption_summary(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/consumable-library/batches", response_model=list[ConsumableBatchHistoryResponse])
+async def list_consumable_label_batches(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    """List one downloadable PDF record per QR-label generation batch."""
+
+    return await list_batch_history(db)
+
+
 @router.post("/consumable-library/batches", response_model=ConsumableBatchResponse, status_code=status.HTTP_201_CREATED)
 async def generate_consumable_batch(
     payload: ConsumableBatchCreate,
@@ -201,6 +220,35 @@ async def generate_consumable_batch(
         return await create_batch(db, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/consumable-library/batches/{batch_id}/pdf")
+async def download_consumable_label_batch(
+    batch_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    """Download a whole QR-label batch as one 40 mm x 40 mm PDF."""
+
+    configured_base = (await get_setting(db, "external_url") or "").strip().rstrip("/")
+    base_url = configured_base or str(request.base_url).rstrip("/")
+    try:
+        pdf, metadata = await render_batch_pdf(db, batch_id, base_url)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    timestamp = metadata["generated_at"].strftime("%Y%m%d-%H%M%S")
+    filename = f"consumable-qr-{metadata['material_type_code']}-{timestamp}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": build_content_disposition(filename, disposition="attachment"),
+            "Content-Length": str(len(pdf)),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/consumable-library/scan", response_model=ConsumableUnitResponse)

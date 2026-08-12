@@ -173,6 +173,22 @@ class ConsumableBatchResponse(BaseModel):
     items: list[ConsumableUnitResponse]
 
 
+class ConsumableBatchHistoryResponse(BaseModel):
+    """One downloadable QR-label PDF batch (not one row per pending roll)."""
+
+    batch_id: str
+    material_type_id: int
+    material_type_code: str
+    material: str
+    subtype: str | None
+    brand: str | None
+    color_name: str | None
+    color_hex: str | None
+    quantity: int
+    received_count: int
+    generated_at: datetime
+
+
 class ConsumableLibrarySummary(BaseModel):
     generated: int
     in_stock: int
@@ -180,6 +196,7 @@ class ConsumableLibrarySummary(BaseModel):
     depleted: int
     scrapped: int
     total: int
+    received_total: int = 0
 
 
 class ConsumableInventoryGroup(BaseModel):
@@ -196,6 +213,7 @@ class ConsumableInventoryGroup(BaseModel):
     depleted: int
     scrapped: int
     total: int
+    received_total: int = 0
 
 
 class ConsumableConsumptionGroup(BaseModel):

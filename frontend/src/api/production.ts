@@ -71,10 +71,14 @@ export interface ConsumableUnit {
   initial_weight_g?:number|null; unit_price?:number|null; remaining_weight_g?:number|null; storage_location?:string|null; generated_at:string;
   received_at?:string|null; depleted_at?:string|null; scrapped_at?:string|null; replayed?:boolean;
 }
-export interface ConsumableSummary { generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; }
+export interface ConsumableSummary { generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; received_total:number; }
 export interface ConsumableInventoryGroup {
   brand?:string|null; material:string; subtype?:string|null; color_name?:string|null; color_hex?:string|null;
-  generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number;
+  generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; received_total:number;
+}
+export interface ConsumableBatchHistory {
+  batch_id:string; material_type_id:number; material_type_code:string; material:string; subtype?:string|null;
+  brand?:string|null; color_name?:string|null; color_hex?:string|null; quantity:number; received_count:number; generated_at:string;
 }
 export interface ConsumableConsumptionGroup {
   brand?:string|null; material:string; subtype?:string|null; color_name?:string|null; color_hex?:string|null;
@@ -155,9 +159,9 @@ export const productionApi={
   clearPlate:(printerId:number)=>request<{success:boolean;message:string}>(`/printers/${printerId}/clear-plate`,{method:'POST'}),
   scanConsumable:(data:{operation_id:string;scan_code:string;material?:string|null;color_hex?:string|null;color_name?:string|null;spool_id?:number|null;consumable_unit_id?:number|null;printer_id?:number|null;virtual_printer_id?:number|null})=>
     request<PrinterConsumable & { replayed:boolean; replaced_id?:number|null }>('/production/printer-consumables/scan',{method:'POST',body:JSON.stringify(data)}),
-  listConsumableUnits:(status?:string)=>request<ConsumableUnit[]>('/production/consumable-library' + (status ? '?status_filter=' + encodeURIComponent(status) : '')),
-  consumableSummary:()=>request<ConsumableSummary>('/production/consumable-library/summary'),
-  consumableInventorySummary:()=>request<ConsumableInventoryGroup[]>('/production/consumable-library/inventory-summary'),
+  listConsumableUnits:(status?:string)=>request<ConsumableUnit[]>('/production/consumable-library?' + (status ? 'status_filter=' + encodeURIComponent(status) + '&' : '') + 'include_pending=false'),
+  consumableSummary:()=>request<ConsumableSummary>('/production/consumable-library/summary?include_pending=false'),
+  consumableInventorySummary:()=>request<ConsumableInventoryGroup[]>('/production/consumable-library/inventory-summary?include_pending=false'),
   consumableConsumptionSummary:(params?:{period?:string;start_date?:string;end_date?:string})=>{
     const query = new URLSearchParams();
     if (params?.period) query.set('period', params.period);
@@ -167,6 +171,19 @@ export const productionApi={
   },
   generateConsumableBatch:(data:{operation_id:string;material_type_id:number;quantity:number;initial_weight_g?:number|null;unit_price?:number|null;remaining_weight_g?:number|null})=>
     request<{batch_id:string;items:ConsumableUnit[]}>('/production/consumable-library/batches',{method:'POST',body:JSON.stringify(data)}),
+  listConsumableBatchHistory:()=>request<ConsumableBatchHistory[]>('/production/consumable-library/batches'),
+  downloadConsumableBatchPdf:async (batchId:string):Promise<void> => {
+    const headers:Record<string,string> = {};
+    const token = getAuthToken(); if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`/api/v1/production/consumable-library/batches/${encodeURIComponent(batchId)}/pdf`, { headers });
+    if (!response.ok) throw new Error(`二维码 PDF 下载失败（${response.status}）`);
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = disposition.match(/filename\*?=(?:UTF-8''|"?)([^";]+)/i);
+    const filename = filenameMatch?.[1] ? decodeURIComponent(filenameMatch[1]) : `consumable-qr-${batchId}.pdf`;
+    const url = window.URL.createObjectURL(blob); const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.URL.revokeObjectURL(url);
+  },
   scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:'receive'|'deplete'|'scrap';remaining_weight_g?:number;storage_location?:string|null})=>
     request<ConsumableUnit>('/production/consumable-library/scan',{method:'POST',body:JSON.stringify(data)}),
   listPrinterStatuses:()=>request<ProductionPrinterStatus[]>('/production/printer-status'),

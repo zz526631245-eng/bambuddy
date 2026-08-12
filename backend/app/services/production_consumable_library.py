@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from urllib.parse import quote
 from uuid import uuid4
 
 from sqlalchemy import case, func, select
@@ -23,6 +24,7 @@ from backend.app.models.production_consumable_unit import (
 from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
 from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import ConsumableBatchCreate, ConsumableLibraryScan
+from backend.app.services.label_renderer import LabelData, render_labels
 
 
 async def _serialize(unit: ProductionConsumableUnit, db: AsyncSession, *, replayed: bool = False) -> dict:
@@ -50,15 +52,118 @@ async def _serialize(unit: ProductionConsumableUnit, db: AsyncSession, *, replay
     }
 
 
-async def list_units(db: AsyncSession, *, status: str | None = None) -> list[dict]:
+async def list_units(
+    db: AsyncSession,
+    *,
+    status: str | None = None,
+    include_pending: bool = True,
+) -> list[dict]:
     query = select(ProductionConsumableUnit).order_by(
         ProductionConsumableUnit.generated_at.desc(),
         ProductionConsumableUnit.id.desc(),
     )
     if status:
         query = query.where(ProductionConsumableUnit.status == status)
+    elif not include_pending:
+        query = query.where(ProductionConsumableUnit.status != CONSUMABLE_GENERATED)
     rows = list((await db.execute(query)).scalars().all())
     return [await _serialize(row, db) for row in rows]
+
+
+async def list_batch_history(db: AsyncSession) -> list[dict]:
+    """Return one downloadable record per generated QR-label batch.
+
+    Generated units remain internal so a later receive scan can resolve the
+    unique code, but they are deliberately not exposed as inventory rows.
+    This batch-level view is the only place pending labels remain visible.
+    """
+
+    rows = list(
+        (
+            await db.execute(
+                select(ProductionConsumableUnit).order_by(
+                    ProductionConsumableUnit.generated_at.desc(),
+                    ProductionConsumableUnit.id.desc(),
+                )
+            )
+        ).scalars().all()
+    )
+    grouped: dict[str, list[ProductionConsumableUnit]] = {}
+    for row in rows:
+        grouped.setdefault(row.label_batch_id, []).append(row)
+
+    result: list[dict] = []
+    for batch_id, batch_rows in grouped.items():
+        first = batch_rows[0]
+        material = await db.get(MaterialType, first.material_type_id)
+        received_count = sum(
+            row.status
+            in (CONSUMABLE_IN_STOCK, CONSUMABLE_BOUND, CONSUMABLE_DEPLETED, CONSUMABLE_SCRAPPED)
+            for row in batch_rows
+        )
+        result.append(
+            {
+                "batch_id": batch_id,
+                "material_type_id": first.material_type_id,
+                "material_type_code": material.code,
+                "material": material.material,
+                "subtype": material.subtype,
+                "brand": material.brand,
+                "color_name": material.color_name,
+                "color_hex": material.color_hex,
+                "quantity": len(batch_rows),
+                "received_count": received_count,
+                "generated_at": first.generated_at,
+            }
+        )
+    # ``generated_at`` is the authoritative ordering key; the secondary key
+    # keeps the order deterministic when two batches share one DB timestamp.
+    return sorted(result, key=lambda row: (row["generated_at"], row["batch_id"]), reverse=True)
+
+
+async def render_batch_pdf(db: AsyncSession, batch_id: str, base_url: str) -> tuple[bytes, dict]:
+    """Render every QR in a batch as one 40 mm x 40 mm PDF.
+
+    The page size is intentionally the physical label size (one label per
+    page), which avoids A4/Letter margins and is directly consumable by a
+    continuous label printer.
+    """
+
+    rows = list(
+        (
+            await db.execute(
+                select(ProductionConsumableUnit)
+                .where(ProductionConsumableUnit.label_batch_id == batch_id)
+                .order_by(ProductionConsumableUnit.id.asc())
+            )
+        ).scalars().all()
+    )
+    if not rows:
+        raise LookupError("二维码批次不存在")
+
+    data: list[LabelData] = []
+    material = await db.get(MaterialType, rows[0].material_type_id)
+    base = base_url.rstrip("/")
+    for row in rows:
+        data.append(
+            LabelData(
+                spool_id=row.id,
+                name=row.unit_code,
+                material=material.material,
+                brand=material.brand,
+                subtype=material.subtype,
+                rgba=material.color_hex,
+                deeplink_url=f"{base}/consumable-library?scan={quote(row.unit_code, safe='')}",
+            )
+        )
+    pdf = render_labels("consumable_40x40", data)
+    metadata = {
+        "batch_id": batch_id,
+        "quantity": len(rows),
+        "material_type_code": material.code,
+        "generated_at": rows[0].generated_at,
+    }
+    return pdf, metadata
 
 
 async def create_batch(db: AsyncSession, payload: ConsumableBatchCreate) -> dict:
@@ -197,9 +302,16 @@ async def scan_unit(db: AsyncSession, payload: ConsumableLibraryScan) -> dict:
     return await _serialize(row, db)
 
 
-async def summary(db: AsyncSession) -> dict:
-    rows = list((await db.execute(select(ProductionConsumableUnit.status))).scalars())
+async def summary(db: AsyncSession, *, include_pending: bool = True) -> dict:
+    query = select(ProductionConsumableUnit.status)
+    if not include_pending:
+        query = query.where(ProductionConsumableUnit.status != CONSUMABLE_GENERATED)
+    rows = list((await db.execute(query)).scalars())
     counts = Counter(rows)
+    received_total = sum(
+        counts[status]
+        for status in (CONSUMABLE_IN_STOCK, CONSUMABLE_BOUND, CONSUMABLE_DEPLETED, CONSUMABLE_SCRAPPED)
+    )
     return {
         "generated": counts[CONSUMABLE_GENERATED],
         "in_stock": counts[CONSUMABLE_IN_STOCK],
@@ -207,15 +319,17 @@ async def summary(db: AsyncSession) -> dict:
         "depleted": counts[CONSUMABLE_DEPLETED],
         "scrapped": counts[CONSUMABLE_SCRAPPED],
         "total": len(rows),
+        "received_total": received_total,
     }
 
 
-async def inventory_summary(db: AsyncSession) -> list[dict]:
-    """Group all generated rolls by their material master identity.
+async def inventory_summary(db: AsyncSession, *, include_pending: bool = True) -> list[dict]:
+    """Group consumable rolls by their material master identity.
 
-    Counts stay in the backend so the inventory screen remains a display of
-    authoritative totals instead of re-counting individual QR units in the
-    browser.
+    ``include_pending=False`` is used by the inventory screen so labels that
+    have been printed but not scanned into storage do not appear as stock.
+    Counts stay in the backend so the screen remains authoritative instead of
+    re-counting individual QR units in the browser.
     """
 
     status_counts = {
@@ -230,7 +344,7 @@ async def inventory_summary(db: AsyncSession) -> list[dict]:
             CONSUMABLE_SCRAPPED,
         )
     }
-    result = await db.execute(
+    query = (
         select(
             MaterialType.brand,
             MaterialType.material,
@@ -256,6 +370,9 @@ async def inventory_summary(db: AsyncSession) -> list[dict]:
             MaterialType.color_hex,
         )
     )
+    if not include_pending:
+        query = query.where(ProductionConsumableUnit.status != CONSUMABLE_GENERATED)
+    result = await db.execute(query)
     return [
         {
             "brand": row.brand,
@@ -265,6 +382,7 @@ async def inventory_summary(db: AsyncSession) -> list[dict]:
             "color_hex": row.color_hex,
             **{status: int(getattr(row, status) or 0) for status in status_counts},
             "total": int(row.total or 0),
+            "received_total": int(row.total or 0) - int(getattr(row, CONSUMABLE_GENERATED) or 0),
         }
         for row in result
     ]

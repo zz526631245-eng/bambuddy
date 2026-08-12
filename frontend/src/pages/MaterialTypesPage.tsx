@@ -3,7 +3,7 @@ import { Download, PackagePlus, Plus, QrCode, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { materialsApi, type MaterialInput, type MaterialType } from '../api/materials';
-import { productionApi, type ConsumableUnit } from '../api/production';
+import { productionApi } from '../api/production';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
 import { HubNav } from '../components/HubNav';
@@ -13,8 +13,6 @@ import { isLoopbackPage, mobileBaseUrl } from '../utils/mobileUrl';
 
 const inputClass = 'bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white min-w-0';
 const empty: MaterialInput = { code: '', material: 'PLA', subtype: '', brand: '', color_name: '', color_hex: '#FFFFFF', is_active: true };
-const statusText: Record<string, string> = { generated: '待入库', in_stock: '已入库', bound: '使用中', depleted: '已耗尽', scrapped: '已报废' };
-
 function operationId(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
 }
@@ -22,10 +20,6 @@ function operationId(prefix: string) {
 function materialQrPayload(material: MaterialType): string {
   const params = new URLSearchParams({ v: '1', code: material.code, material: material.material, color: (material.color_hex || '').replace(/^#/, ''), name: material.color_name || '' });
   return mobileBaseUrl() + '/printer-consumables?scan=' + encodeURIComponent('bambuddy://material?' + params.toString());
-}
-
-function consumableQrPayload(unit: ConsumableUnit): string {
-  return mobileBaseUrl() + '/consumable-library?scan=' + encodeURIComponent(unit.unit_code);
 }
 
 function downloadQr(id: string, filename: string) {
@@ -42,6 +36,7 @@ function downloadQr(id: string, filename: string) {
 export function MaterialTypesPage() {
   const queryClient = useQueryClient();
   const { data = [] } = useQuery({ queryKey: ['material-types'], queryFn: materialsApi.list });
+  const { data: batchHistory = [] } = useQuery({ queryKey: ['consumable-batch-history'], queryFn: productionApi.listConsumableBatchHistory });
   const [form, setForm] = useState(empty);
   const [generateMaterial, setGenerateMaterial] = useState<MaterialType | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -57,6 +52,7 @@ export function MaterialTypesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['material-types'] });
       queryClient.invalidateQueries({ queryKey: ['consumable-library'] });
+      queryClient.invalidateQueries({ queryKey: ['consumable-batch-history'] });
       setGenerateMaterial(null);
       setQuantity(1);
       setInitialWeightG(1000);
@@ -97,16 +93,16 @@ export function MaterialTypesPage() {
 
     <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{data.map(material => {
       const stats = material.consumable_stats;
-      const materialUnits = stats?.units || [];
+      const materialBatches = batchHistory.filter(batch => batch.material_type_id === material.id);
       return <Card key={material.id}><CardContent>
         <div className="flex justify-between"><span className="font-mono text-bambu-green">{material.code}</span><button aria-label={'删除 ' + material.code} className="text-red-400" onClick={async () => { if (confirm('确认删除？被配方或耗材引用时系统会阻止删除。')) { await materialsApi.remove(material.id); queryClient.invalidateQueries({ queryKey: ['material-types'] }); } }}><Trash2 size={17} /></button></div>
         <div className="flex gap-4 mt-4 items-center"><span className="w-10 h-10 rounded-full border border-white/20" style={{ background: material.color_hex || '#777' }} /><div><h2 className="text-white font-semibold">{material.brand || '未指定品牌'} · {material.material}{material.subtype ? ' ' + material.subtype : ''}</h2><p className="text-bambu-gray">{material.color_name || '未命名颜色'} · {material.color_hex || '无颜色值'}</p></div></div>
-        <div className="grid grid-cols-3 gap-2 mt-4 text-center text-xs"><div className="rounded bg-bambu-dark p-2"><p className="text-bambu-gray">总卷数</p><p className="text-white text-lg">{stats?.total ?? 0}</p></div><div className="rounded bg-bambu-dark p-2"><p className="text-bambu-gray">已入库</p><p className="text-bambu-green text-lg">{stats?.received ?? '—'}</p></div><div className="rounded bg-bambu-dark p-2"><p className="text-bambu-gray">待入库</p><p className="text-amber-300 text-lg">{stats?.generated ?? '—'}</p></div></div>
+        <div className="grid grid-cols-2 gap-2 mt-4 text-center text-xs"><div className="rounded bg-bambu-dark p-2"><p className="text-bambu-gray">已入库卷数</p><p className="text-bambu-green text-lg">{stats?.received ?? 0}</p></div><div className="rounded bg-bambu-dark p-2"><p className="text-bambu-gray">二维码批次</p><p className="text-white text-lg">{materialBatches.length}</p></div></div>
         <div className="mt-4 rounded-lg bg-white p-3 inline-flex"><QRCodeSVG id={'material-qr-' + material.id} value={materialQrPayload(material)} size={128} includeMargin /></div>
         <p className="text-xs text-bambu-gray mt-2 flex items-center gap-1"><QrCode size={14} />材料类型二维码：{material.code}</p>
         <Button type="button" variant="secondary" className="mt-3" onClick={() => setGenerateMaterial(material)}><PackagePlus size={16} />生成耗材卷二维码</Button>
         <Button type="button" variant="secondary" className="mt-3 ml-2" onClick={() => downloadQr('material-qr-' + material.id, material.code + '-material.svg')}><Download size={16} />下载材料二维码</Button>
-        <div className="mt-5 border-t border-bambu-gray-dark pt-4"><h3 className="text-white font-semibold">该材料的耗材卷二维码</h3><p className="text-xs text-bambu-gray mt-1">按生成时间从新到旧排列；扫码入库后才可绑定打印机。</p>{materialUnits.length === 0 && <p className="text-sm text-bambu-gray mt-3">暂未生成耗材卷。</p>}<div className="space-y-3 mt-3">{materialUnits.map(unit => <div key={unit.id} className="rounded-lg bg-bambu-dark p-3"><div className="flex justify-between gap-2"><span className="font-mono text-bambu-green text-xs break-all">{unit.unit_code}</span><span className="text-xs text-white">{statusText[unit.status] || unit.status}</span></div><div className="mt-2 flex items-center gap-3"><div className="inline-flex bg-white p-1 rounded"><QRCodeSVG id={'unit-qr-' + unit.id} value={consumableQrPayload(unit)} size={96} includeMargin /></div><div className="text-xs text-bambu-gray"><p>生成时间：{new Date(unit.generated_at).toLocaleString()}</p><Button type="button" size="sm" variant="secondary" className="mt-2" onClick={() => downloadQr('unit-qr-' + unit.id, unit.unit_code + '.svg')}><Download size={14} />下载此卷二维码</Button></div></div></div>)}</div></div>
+        <div className="mt-5 border-t border-bambu-gray-dark pt-4"><h3 className="text-white font-semibold">二维码打印批次</h3><p className="text-xs text-bambu-gray mt-1">每次生成对应一个 PDF，按生成时间从新到旧排列；每页标签尺寸为 40mm × 40mm。</p>{materialBatches.length === 0 && <p className="text-sm text-bambu-gray mt-3">暂未生成二维码批次。</p>}<div className="space-y-2 mt-3">{materialBatches.map(batchItem => <div key={batchItem.batch_id} className="rounded-lg bg-bambu-dark p-3 flex items-center justify-between gap-3"><div className="min-w-0"><p className="text-white">{new Date(batchItem.generated_at).toLocaleString()}</p><p className="text-xs text-bambu-gray mt-1">共 {batchItem.quantity} 张 · 已入库 {batchItem.received_count} 张</p></div><Button type="button" size="sm" variant="secondary" onClick={() => productionApi.downloadConsumableBatchPdf(batchItem.batch_id)}><Download size={14} />下载 PDF</Button></div>)}</div></div>
       </CardContent></Card>;
     })}</div>
 

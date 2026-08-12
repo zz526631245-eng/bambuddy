@@ -42,6 +42,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas as rl_canvas
 
 TemplateName = Literal[
+    "consumable_40x40",
     "ams_holder_74x33",
     "ams_holder_75x55",
     "box_40x30",
@@ -411,6 +412,10 @@ def _draw_label_roomy(
 
 # (label_w_mm, label_h_mm) for single-label-per-page templates.
 _SINGLE_LABEL_SIZES_MM: dict[str, tuple[float, float]] = {
+    # One page per label keeps the PDF's physical page size identical to a
+    # 40 mm x 40 mm continuous-label printer.  The printer can advance one
+    # page for each QR label without any sheet-specific margin assumptions.
+    "consumable_40x40": (40.0, 40.0),
     "ams_holder_74x33": (74.0, 33.0),
     "ams_holder_75x55": (75.0, 55.0),
     "box_40x30": (40.0, 30.0),
