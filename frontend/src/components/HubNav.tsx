@@ -8,6 +8,9 @@ export interface HubNavItem {
 interface HubNavProps {
   items: HubNavItem[];
   ariaLabel: string;
+  /** When supplied, keep the user on the current page and reveal the section. */
+  onSelect?: (to: string) => void;
+  activeTo?: string;
 }
 
 /**
@@ -15,7 +18,7 @@ interface HubNavProps {
  * out of the primary sidebar. It keeps existing routes discoverable without
  * creating another feature or changing any backend behaviour.
  */
-export function HubNav({ items, ariaLabel }: HubNavProps) {
+export function HubNav({ items, ariaLabel, onSelect, activeTo }: HubNavProps) {
   const location = useLocation();
 
   return (
@@ -23,12 +26,17 @@ export function HubNav({ items, ariaLabel }: HubNavProps) {
       <div className="mb-2 px-2 text-xs text-bambu-gray">相关功能</div>
       <div className="flex flex-wrap gap-2">
         {items.map(item => {
-          const active = location.pathname === item.to ||
+          const active = (activeTo || location.pathname) === item.to ||
             (item.to !== '/' && location.pathname.startsWith(`${item.to}/`));
           return (
             <Link
               key={item.to}
               to={item.to}
+              onClick={event => {
+                if (!onSelect) return;
+                event.preventDefault();
+                onSelect(item.to);
+              }}
               className={`rounded-md px-3 py-1.5 text-sm transition-colors ${active
                 ? 'bg-bambu-green text-bambu-dark font-medium'
                 : 'text-bambu-gray-light hover:bg-bambu-dark-tertiary hover:text-white'}`}

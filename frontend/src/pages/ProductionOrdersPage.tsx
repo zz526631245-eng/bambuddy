@@ -8,6 +8,9 @@ import { productsApi } from '../api/products';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
 import { HubNav } from '../components/HubNav';
+import { QueuePage } from './QueuePage';
+import { ProductionPrinterStatusPage } from './ProductionPrinterStatusPage';
+import { SliceLibraryPage } from './SliceLibraryPage';
 
 const statusText: Record<string, string> = { draft: '草稿', planned: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消' };
 const imageUrl = (productId: number, imageId: number) => `/api/v1/products/${productId}/images/${imageId}/file`;
@@ -23,6 +26,7 @@ export function ProductionOrdersPage() {
   const [productSearch, setProductSearch] = useState('');
   const [addingProductId, setAddingProductId] = useState<number | null>(null);
   const [additionalQuantity, setAdditionalQuantity] = useState(1);
+  const [activeSection, setActiveSection] = useState('/production-orders');
   const [form, setForm] = useState({ product_id: 0, product_file_id: 0, quantity: 1, priority: 0, due_at: '', notes: '' });
   const create = useMutation({ mutationFn: productionApi.createOrder, onSuccess: order => { queryClient.invalidateQueries({ queryKey: ['production-orders'] }); queryClient.invalidateQueries({ queryKey: ['production-product-summaries'] }); setShow(false); navigate(`/production-orders/${order.id}`); } });
   const append = useMutation({
@@ -40,10 +44,14 @@ export function ProductionOrdersPage() {
   const productIdsWithOrders = new Set(orders.map(order => order.product_id));
   const summaryByProduct = new Map(summaries.map(summary => [summary.product_id, summary]));
   const addQuantity = (event: FormEvent, productId: number) => { event.preventDefault(); if (additionalQuantity > 0 && !append.isPending) append.mutate({ productId, quantity: additionalQuantity }); };
+  const selectSection = (to: string) => {
+    setActiveSection(to);
+    if (to !== '/production-orders') window.setTimeout(() => document.getElementById('production-related-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  };
 
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
     <div className="flex flex-wrap justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">生产订单</h1><p className="text-bambu-gray mt-1">选择产品和产品源文件，系统根据文件版本创建生产快照。</p></div><Button onClick={() => setShow(!show)}><Plus size={18} />新建生产订单</Button></div>
-    <HubNav ariaLabel="生产中心导航" items={[
+    <HubNav ariaLabel="生产中心导航" activeTo={activeSection} onSelect={selectSection} items={[
       { to: '/production-orders', label: '生产订单' },
       { to: '/queue', label: '打印队列' },
       { to: '/production-printer-status', label: '打印机状态' },
@@ -78,6 +86,11 @@ export function ProductionOrdersPage() {
     })}</div></section>}
 
     {orders.length === 0 ? <Card><CardContent className="text-center py-16 text-bambu-gray"><ClipboardList className="mx-auto mb-3" />还没有生产订单。</CardContent></Card> : <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{orders.map(order => <Link key={order.id} to={`/production-orders/${order.id}`}><Card className="h-full hover:border-bambu-green"><CardContent><div className="flex justify-between"><span className="font-mono text-bambu-green">{order.order_number}</span><span className="text-white">{statusText[order.status] || order.status}</span></div><h2 className="text-xl text-white font-semibold mt-4">{String(order.product_snapshot?.name || `产品 ${order.product_id}`)}</h2><p className="text-bambu-gray mt-2">生产 {order.quantity} 套 · {String(order.product_file_snapshot?.name || '产品源文件')}</p><p className="text-bambu-green mt-5">查看数量进度和任务草稿 →</p></CardContent></Card></Link>)}</div>}
+    {activeSection !== '/production-orders' && <section id="production-related-content" className="scroll-mt-6 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
+      {activeSection === '/queue' && <QueuePage />}
+      {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
+      {activeSection === '/slice-library' && <SliceLibraryPage />}
+    </section>}
     <style>{`.stage8-input{background:#18181b;border:1px solid #3f3f46;border-radius:.5rem;padding:.55rem .75rem;color:white;min-width:0}`}</style>
   </div>;
 }

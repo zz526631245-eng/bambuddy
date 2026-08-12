@@ -7,6 +7,8 @@ import { productsApi } from '../api/products';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
 import { HubNav } from '../components/HubNav';
+import { FileManagerPage } from './FileManagerPage';
+import { MakerworldPage } from './MakerworldPage';
 
 const imageUrl = (productId: number, imageId: number) => `/api/v1/products/${productId}/images/${imageId}/file`;
 
@@ -15,6 +17,7 @@ export function ProductsPage() {
   const { data = [] } = useQuery({ queryKey: ['products'], queryFn: productsApi.list });
   const [show, setShow] = useState(false);
   const [search, setSearch] = useState('');
+  const [activeSection, setActiveSection] = useState('/products');
   const [form, setForm] = useState({ name: '', description: '', image: null as File | null, production_mode: 'single_plate' as 'single_plate' | 'multi_plate', source_plate_count: 1 });
   const create = useMutation({
     mutationFn: () => {
@@ -31,11 +34,14 @@ export function ProductsPage() {
     catch (error) { window.alert(error instanceof Error ? error.message : '导入产品失败。'); }
   };
   const rows = data.filter(product => `${product.sku} ${product.name}`.toLowerCase().includes(search.toLowerCase()));
+  const selectSection = (to: string) => {
+    setActiveSection(to);
+    if (to !== '/products') window.setTimeout(() => document.getElementById('products-related-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  };
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
     <div className="flex flex-wrap gap-4 justify-between items-center"><div><h1 className="text-3xl font-bold text-white">产品资料</h1><p className="text-bambu-gray mt-1">产品编码由系统自动生成；创建产品时必须上传产品图片。</p></div><div className="flex gap-2"><label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-bambu-dark-tertiary text-white cursor-pointer"><Upload size={18} />导入产品包<input className="hidden" type="file" accept=".zip" onChange={importArchive} /></label><Button onClick={() => setShow(!show)}><Plus size={18} />新建产品</Button></div></div>
-    <HubNav ariaLabel="产品资料相关功能" items={[
+    <HubNav ariaLabel="产品资料相关功能" activeTo={activeSection} onSelect={selectSection} items={[
       { to: '/products', label: '产品资料' },
-      { to: '/projects', label: '项目' },
       { to: '/files', label: '文件管理器' },
       { to: '/makerworld', label: 'MakerWorld' },
     ]} />
@@ -50,5 +56,9 @@ export function ProductsPage() {
     </form></CardContent></Card>}
     <div className="relative max-w-md"><Search className="absolute left-3 top-2.5 text-bambu-gray" size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索产品编码或产品名" className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg pl-10 pr-3 py-2 text-white" /></div>
     {rows.length === 0 ? <Card><CardContent className="text-center text-bambu-gray py-16"><Box className="mx-auto mb-3" />还没有产品，点击“新建产品”开始。</CardContent></Card> : <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">{rows.map(product => { const image = product.images?.[0]; return <Link key={product.id} to={`/products/${product.id}`}><Card className="h-full hover:border-bambu-green transition-colors overflow-hidden"><div className="aspect-video bg-bambu-dark flex items-center justify-center">{image ? <img src={imageUrl(product.id, image.id)} alt={product.name} className="w-full h-full object-cover" /> : <Box className="text-bambu-gray" size={42} />}</div><CardContent><div className="flex justify-between"><span className="text-xs px-2 py-1 rounded bg-bambu-green/20 text-bambu-green">{product.sku}</span><span className={product.is_active ? 'text-green-400' : 'text-bambu-gray'}>{product.is_active ? '启用' : '停用'}</span></div><h2 className="text-xl text-white font-semibold mt-4">{product.name}</h2><p className="text-bambu-gray mt-2 line-clamp-2">{product.description || '暂无说明'}</p><p className="text-bambu-green mt-5">查看产品详情 →</p></CardContent></Card></Link>; })}</div>}
+    {activeSection !== '/products' && <section id="products-related-content" className="scroll-mt-6 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
+      {activeSection === '/files' && <FileManagerPage />}
+      {activeSection === '/makerworld' && <MakerworldPage />}
+    </section>}
   </div>;
 }

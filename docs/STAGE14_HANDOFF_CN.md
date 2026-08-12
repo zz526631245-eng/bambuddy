@@ -144,3 +144,10 @@ npm.cmd run lint
 - 主侧边栏入口为打印机、生产中心、耗材中心、产品、打印记录、设置。相关低频页面通过生产中心、耗材中心、打印机和产品页的“相关功能”入口访问。
 - 验证：`npm.cmd run lint`、`npm.cmd test -- --run src/__tests__/components/Layout.test.tsx src/__tests__/pages/Stage8ProductionOrders.test.tsx`（31 passed）、`npm.cmd run build` 均通过。
 - 下一步：用户刷新 8019 页面检查导航是否符合日常操作；确认后再决定是否继续调整分组或制作安装包。
+
+## 分组入口页面内展开补充（2026-08-12）
+
+- 生产中心、耗材中心、打印机、产品资料的 HubNav 已改为页面内选择器；点击相关功能会在当前页面下方复用原完整页面组件并自动滚动到内容区。
+- 产品资料分组移除“项目”入口；Projects 路由及数据保留。
+- 新增 HubNav 交互回归，验证带 `onSelect` 时阻止路由跳转并返回目标分组。
+- 验证：`npm.cmd run build`、`npm.cmd run lint`、Layout/生产订单/设置定向测试 `78 passed`，HubNav 测试通过。

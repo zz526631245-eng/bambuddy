@@ -94,6 +94,9 @@ import { productionApi, type PrinterConsumable } from '../api/production';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { HubNav } from '../components/HubNav';
+import { PrinterProfilesPage } from './PrinterProfilesPage';
+import { MaintenancePage } from './MaintenancePage';
+import { ProductionPrinterStatusPage } from './ProductionPrinterStatusPage';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { BulkPrinterToolbar, type PrinterState } from '../components/BulkPrinterToolbar';
 import { FileManagerModal } from '../components/FileManagerModal';
@@ -7633,6 +7636,11 @@ export function PrintersPage() {
     red: 'bg-red-500 text-white hover:bg-red-400 border-red-400/60',
   }[activeAccent];
   const [showAddModal, setShowAddModal] = useState(false);
+  const [activeSection, setActiveSection] = useState('/');
+  const selectSection = (to: string) => {
+    setActiveSection(to);
+    if (to !== '/') window.setTimeout(() => document.getElementById('printers-related-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  };
   const [hideDisconnected, setHideDisconnected] = useState(() => {
     return localStorage.getItem('hideDisconnectedPrinters') === 'true';
   });
@@ -8573,7 +8581,7 @@ export function PrintersPage() {
           </h1>
           <StatusSummaryBar printers={printers} />
           <div className="mt-3">
-            <HubNav ariaLabel="打印机相关功能" items={[
+            <HubNav ariaLabel="打印机相关功能" activeTo={activeSection} onSelect={selectSection} items={[
               { to: '/', label: '打印机' },
               { to: '/printer-profiles', label: '打印机配置' },
               { to: '/maintenance', label: '维护' },
@@ -8925,6 +8933,13 @@ export function PrintersPage() {
           })}
         />
       ))}
+      {activeSection !== '/' && (
+        <section id="printers-related-content" className="mt-6 scroll-mt-6 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
+          {activeSection === '/printer-profiles' && <PrinterProfilesPage />}
+          {activeSection === '/maintenance' && <MaintenancePage />}
+          {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
+        </section>
+      )}
     </div>
   );
 }
