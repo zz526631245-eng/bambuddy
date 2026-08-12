@@ -1,14 +1,28 @@
 import * as React from 'react';
 import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, CheckCircle2, ScanLine, X } from 'lucide-react';
+import { Camera, CheckCircle2, Download, QrCode, ScanLine, X } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { productionApi } from '../api/production';
 import { Button } from '../components/Button';
 import { Card, CardContent, CardHeader } from '../components/Card';
 import { useSearchParams } from 'react-router-dom';
+import { isLoopbackPage, mobileBaseUrl } from '../utils/mobileUrl';
+import { buildPrinterConsumableQrPayload } from '../utils/printerConsumableQr';
 
 const inputClass = 'mt-1 w-full bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white';
 const operationId = () => 'direct-consumable-' + Date.now() + '-' + Math.random();
+
+function downloadQr(id: string, filename: string) {
+  const svg = document.getElementById(id);
+  if (!svg) return;
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 type ParsedScan = { scanCode: string; targetKey?: string; material?: string; colorHex?: string; colorName?: string };
 
@@ -71,6 +85,7 @@ export function PrinterConsumablesPage() {
     },
   });
   const selected = targets.data?.find(item => item.kind + ':' + item.id === targetKey);
+  const realPrinterTargets = (targets.data ?? []).filter(item => item.kind === 'printer');
   const applyScannedPayload = React.useCallback((rawValue: string) => {
     try {
       const parsed = new URL(rawValue);
@@ -186,7 +201,16 @@ export function PrinterConsumablesPage() {
   };
   return <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
     <div><h1 className="text-3xl font-bold text-white">直供耗材登记</h1><p className="text-bambu-gray mt-1">扫码新耗材后自动替换该打印机的旧直供耗材；AMS 槽位不会被修改。</p></div>
-    <Card><CardHeader><h2 className="text-xl font-semibold text-white flex items-center gap-2"><ScanLine size={20} />模拟扫码测试</h2></CardHeader><CardContent>
+    <Card><CardHeader><h2 className="text-xl font-semibold text-white flex items-center gap-2"><QrCode size={20} />真实打印机二维码</h2></CardHeader><CardContent>
+      <p className="text-sm text-bambu-gray">把对应二维码贴在打印机上。手机先扫描打印机二维码会自动锁定该机，再扫描耗材卷二维码并点击“确认登记”。二维码不包含打印机访问码。</p>
+      {isLoopbackPage() && <p className="mt-3 text-sm text-amber-300">当前地址是 127.0.0.1，下载并打印前请先用手机可访问的 HTTPS 局域网地址打开本系统，否则手机无法访问二维码中的页面。</p>}
+      {realPrinterTargets.length === 0 ? <p className="mt-4 text-sm text-bambu-gray">还没有已启用的真实打印机。</p> : <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{realPrinterTargets.map(target => {
+        const targetKey = `${target.kind}:${target.id}`;
+        const qrId = `printer-consumable-qr-${target.id}`;
+        return <div key={targetKey} className="rounded-lg border border-bambu-gray-dark bg-bambu-dark p-3"><p className="font-semibold text-white">{target.name}</p><p className="mt-1 text-xs text-bambu-gray">{target.model || '未指定型号'} · 直供耗材扫码标签</p><div className="mt-3 inline-flex rounded bg-white p-2"><QRCodeSVG id={qrId} value={buildPrinterConsumableQrPayload(mobileBaseUrl(), targetKey)} size={144} includeMargin /></div><div><Button type="button" size="sm" variant="secondary" className="mt-3" onClick={() => downloadQr(qrId, `printer-${target.id}-consumable-qr.svg`)}><Download size={14} />下载二维码</Button></div></div>;
+      })}</div>}
+    </CardContent></Card>
+    <Card><CardHeader><h2 className="text-xl font-semibold text-white flex items-center gap-2"><ScanLine size={20} />扫码登记</h2></CardHeader><CardContent>
       <form onSubmit={submit} className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
         <label className="text-sm text-bambu-gray">打印机<select aria-label="选择打印机" required value={targetKey} onChange={event => setTargetKey(event.target.value)} className={inputClass}><option value="">选择打印机</option>{(targets.data ?? []).map(item => <option key={item.kind + ':' + item.id} value={item.kind + ':' + item.id}>{item.name} · {item.kind === 'virtual_printer' ? '软件测试' : '真实设备'}{item.model ? ' · ' + item.model : ''}</option>)}</select></label>
         <label className="text-sm text-bambu-gray">扫描码<input aria-label="扫描码" required value={scanCode} onChange={event => setScanCode(event.target.value)} placeholder="扫码枪输入后回车" className={inputClass} /></label>
@@ -196,7 +220,7 @@ export function PrinterConsumablesPage() {
       </form>
       {pendingScan && <div className="mt-3 rounded-lg border border-bambu-green bg-bambu-green/10 px-3 py-2 text-sm text-bambu-green">二维码识别成功，已填入耗材信息；请检查打印机和耗材后点击“确认登记”。</div>}
       <p className="text-xs text-bambu-gray mt-3">已锁定打印机后，耗材二维码识别成功会填入信息；点击“确认登记”后才写入服务器。</p>
-      <p className="text-xs text-bambu-gray mt-3">当前是软件扫码测试入口。真实扫码器后续只需调用同一个接口，不会自动连接打印机。</p>
+      <p className="text-xs text-bambu-gray mt-3">手机网页和固定扫码器都使用同一个登记接口；扫码只更新耗材记录，不会自动连接或发送打印机。</p>
     </CardContent></Card>
     <Card><CardHeader><h2 className="text-xl font-semibold text-white">当前直供耗材</h2></CardHeader><CardContent>{(bindings.data ?? []).length === 0 ? <p className="text-bambu-gray">还没有登记直供耗材。</p> : <div className="grid md:grid-cols-2 gap-3">{(bindings.data ?? []).map(binding => <div key={binding.id} className="rounded border border-bambu-gray-dark bg-bambu-dark p-3 flex gap-3 items-center"><span className="w-10 h-10 rounded-full border border-white/20" style={{ background: '#' + binding.color_hex.slice(0, 6) }} /><div><p className="text-white font-semibold">{binding.virtual_printer_name || binding.printer_name || '未命名打印机'}</p><p className="text-bambu-gray">{binding.material} · {binding.color_name || binding.color_hex} · 扫描码 {binding.scan_code}</p><p className="text-xs text-bambu-gray">直供耗材 · {new Date(binding.scanned_at).toLocaleString()}</p></div></div>)}</div>}</CardContent></Card>
     {cameraOpen && <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"><div className="w-full max-w-md rounded-xl bg-bambu-dark-secondary border border-bambu-gray-dark p-4 space-y-3"><div className="flex justify-between items-center"><h2 className="text-white font-semibold">摄像头扫码</h2><button type="button" aria-label="关闭摄像头扫码" onClick={() => setCameraOpen(false)} className="text-bambu-gray hover:text-white"><X size={20} /></button></div><video ref={videoRef} muted playsInline className="w-full aspect-square rounded-lg bg-black object-cover" /><p className="text-sm text-bambu-gray">将材料二维码放入取景框。若浏览器不支持识别，请使用扫码枪或手动输入。</p></div></div>}

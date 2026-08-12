@@ -122,7 +122,7 @@ npm.cmd run test:run
 ## 自动登记与 ZXing 扫码兼容验证
 
 1. 使用手机可访问的 HTTPS 地址打开 /consumable-library，不要在 127.0.0.1 页面生成手机标签；如需固定地址，配置 VITE_PUBLIC_BASE_URL。
-2. 扫描打印机二维码打开 /printer-consumables?printer=...，确认目标打印机已经自动锁定。
+2. 打开 `/printer-consumables` 顶部“真实打印机二维码”，下载并贴上对应打印机标签。手机扫描后会打开 `/printer-consumables?printer=printer:<id>`，确认目标真实打印机已自动锁定；二维码不包含访问码。
 3. 点击网页摄像头扫码，使用耗材卷二维码；ZXing 会在不支持原生 BarcodeDetector 的浏览器中完成识别。
 4. 识别成功后，页面按耗材卷 unit_code 填入材料和颜色并显示待确认状态；点击“确认登记”后才写入服务器。
 5. 重复扫描同一操作不会重复创建绑定；扫描新耗材会自动替换旧直供耗材。
