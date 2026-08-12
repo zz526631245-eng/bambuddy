@@ -78,6 +78,8 @@ Source: "build\staging\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs ignor
 Source: "build\staging\bin\*"; DestDir: "{app}\bin"; Flags: recursesubdirs ignoreversion
 ; Service install/uninstall scripts
 Source: "build\staging\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs ignoreversion
+; Automatic slicing bootstrap (Docker Desktop + Orca/Bambu sidecars)
+Source: "build\staging\slicer-api\*"; DestDir: "{app}\slicer-api"; Flags: recursesubdirs ignoreversion
 ; Version stamp
 Source: "build\staging\VERSION"; DestDir: "{app}"; Flags: ignoreversion
 ; App icon — used by UninstallDisplayIcon (Add/Remove Programs) and the
@@ -93,6 +95,7 @@ Name: "{commonappdata}\Bambuddy\logs"; Permissions: users-modify
 
 [Icons]
 Name: "{group}\Open Bambuddy Dashboard"; Filename: "http://localhost:{#DefaultPort}"; IconFilename: "{app}\bambuddy.ico"
+Name: "{group}\Bambuddy Slicer Setup"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service\setup-slicer.ps1"" -InstallDir ""{app}"" -DataRoot ""{commonappdata}\Bambuddy"""; WorkingDir: "{app}"; IconFilename: "{app}\bambuddy.ico"
 Name: "{group}\Bambuddy Logs"; Filename: "{commonappdata}\Bambuddy\logs"
 Name: "{group}\Uninstall Bambuddy"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\Bambuddy"; Filename: "http://localhost:{#DefaultPort}"; IconFilename: "{app}\bambuddy.ico"; Tasks: desktopicon
@@ -102,6 +105,11 @@ Name: "{commondesktop}\Bambuddy"; Filename: "http://localhost:{#DefaultPort}"; I
 ; install. Existing data is moved to a timestamped quarantine folder and is
 ; never loaded by the new instance; upgrades after the marker preserve data.
 Filename: "{app}\service\prepare-clean-data.bat"; Parameters: """{commonappdata}\Bambuddy"""; Flags: runhidden waituntilterminated; StatusMsg: "Preparing a clean production data directory..."
+
+; Install Docker Desktop if needed, start both slicer sidecars, and wait for
+; their health endpoints. The script is intentionally non-blocking on failure:
+; Bambuddy can still open and the setup status is saved under ProgramData.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service\setup-slicer.ps1"" -InstallDir ""{app}"" -DataRoot ""{commonappdata}\Bambuddy"""; Flags: runhidden waituntilterminated; StatusMsg: "Installing and starting automatic slicing service..."
 
 ; Register and start the Windows service
 Filename: "{app}\service\install-service.bat"; Parameters: """{app}"" ""{commonappdata}\Bambuddy"" {#DefaultPort}"; Flags: runhidden waituntilterminated; StatusMsg: "Registering Bambuddy service..."
@@ -119,6 +127,10 @@ Filename: "http://localhost:{#DefaultPort}"; Flags: shellexec postinstall nowait
 ; entry run-once per uninstall pass (Inno Setup default is to re-run on
 ; every pass, which can fire multiple times during upgrade flows).
 Filename: "{app}\service\uninstall-service.bat"; Parameters: """{app}"""; Flags: runhidden waituntilterminated; RunOnceId: "StopBambuddyService"
+
+; Stop slicer containers but keep their images and data for a possible
+; re-install. This is deliberately non-destructive.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service\setup-slicer.ps1"" -InstallDir ""{app}"" -DataRoot ""{commonappdata}\Bambuddy"" -StopOnly"; Flags: runhidden waituntilterminated; RunOnceId: "StopBambuddySlicer"
 
 ; Remove the firewall rule (silently — if it doesn't exist, netsh just complains)
 Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Bambuddy Dashboard"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveFirewallRule"

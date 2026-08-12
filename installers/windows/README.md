@@ -14,6 +14,9 @@ service. No Python or Node installation required on the target machine.
 - **Service:** registered via NSSM, runs as `LocalSystem`, autostart on boot
 - **Service command:** `python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --loop asyncio` (`--loop asyncio` avoids a uvloop TLS bug that can truncate VP FTP uploads, #1896)
 - **Bundled binaries:** Python 3.13 embeddable, NSSM, ffmpeg static build
+- **Automatic slicing:** the installer includes the slicer compose definition,
+  installs Docker Desktop when it is missing, starts the OrcaSlicer and
+  BambuStudio sidecars, and verifies their health before starting Bambuddy.
 - **Production build:** `VITE_PRODUCTION_BUILD=1` hides the virtual-printer test entry; the service sets `BAMBUDDY_PRODUCTION_BUILD=1`.
 - **First install:** `service\prepare-clean-data.bat` creates an empty data directory. An existing data directory is moved to `previous-data-<timestamp>` and is not loaded. The `.fresh-install-complete` marker prevents later upgrades from resetting production data.
 
@@ -41,7 +44,9 @@ building from Linux is possible via Wine but not officially supported.
   `bambuddy.iss` → `.exe`)
 
 The build script downloads everything else automatically (embedded Python,
-NSSM, ffmpeg).
+NSSM, ffmpeg). Docker Desktop and the slicer images are installed on the
+target computer during the installer run because they are third-party
+components and are not embedded inside the `.exe`.
 
 ## Build steps
 
@@ -82,12 +87,16 @@ as a release asset.
 - **Spoolman:** explicitly NOT bundled in v1. Users who want Spoolman
   install it separately. Bambuddy internal-inventory mode is the default
   on Windows.
-- **Slicer sidecar:** the installer includes Bambuddy's slicer integration and
-  slice-library code, but does not redistribute Bambu Studio/OrcaSlicer or
-  Docker. Configure an existing sidecar in Settings → Slicer (or run the
-  optional `slicer-api/docker-compose.yml` stack with Docker Desktop) before
-  relying on automatic slicing. This avoids silently shipping third-party
-  binaries and licenses inside the one-click installer.
+- **Slicer sidecar:** on first install, `service\setup-slicer.ps1` uses the
+  official Docker Desktop package (winget first, official download fallback),
+  pulls the OrcaSlicer/BambuStudio API images, and starts them on ports 3003
+  and 3001. The status is written to
+  `C:\ProgramData\Bambuddy\slicer\setup-status.txt`; a Start Menu shortcut
+  named **Bambuddy Slicer Setup** can safely retry the setup. Docker Desktop
+  may request one Windows restart or WSL2 initialization; the installer
+  registers a RunOnce continuation so setup resumes after the next login.
+  The compose stack and its data are kept on uninstall (containers are
+  stopped, images/data are not deleted).
 - **Bundle size:** estimated 250–350MB installed (mostly opencv +
   ffmpeg + matplotlib). Acceptable for a v1; can investigate slimming
   later if users complain.

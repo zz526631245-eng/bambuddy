@@ -315,6 +315,25 @@ def stage_service_scripts() -> None:
     shutil.copytree(service_src, service_dst)
 
 
+def stage_slicer_stack() -> None:
+    """Stage the compose definition used by the automatic slicing bootstrap.
+
+    Docker Desktop itself is installed on the target machine by the bundled
+    ``service/setup-slicer.ps1`` script.  The compose file is copied into the
+    installer so a novice user does not need to locate or configure the
+    sidecars manually.
+    """
+    source = REPO_ROOT / "slicer-api" / "docker-compose.yml"
+    target = STAGING / "slicer-api"
+    if not source.exists():
+        raise RuntimeError(f"slicer compose file missing at {source}")
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target / source.name)
+    log("staging slicer-api/docker-compose.yml")
+
+
 def _read_app_version() -> str:
     """Read APP_VERSION from backend/app/core/config.py (the canonical
     source used by every other Bambuddy surface — FastAPI OpenAPI title,
@@ -432,6 +451,7 @@ def main() -> int:
     stage_nssm()
     stage_ffmpeg()
     stage_service_scripts()
+    stage_slicer_stack()
     write_version_file()
 
     log("")

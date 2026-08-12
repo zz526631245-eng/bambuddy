@@ -1,5 +1,12 @@
 # 当前开发状态
 
+## Windows 小白安装与自动切片启动（2026-08-12）
+- Windows 安装包现在内置 `slicer-api/docker-compose.yml` 和 `service/setup-slicer.ps1`：首次安装会检测 Docker Desktop，不存在时优先通过 winget 安装，失败时回退到 Docker 官方安装程序。
+- 安装脚本会启动 Docker Desktop，使用 `docker compose --profile bambu up -d` 拉取并启动 OrcaSlicer（3003）与 BambuStudio（3001）sidecar，并轮询 `/health`；后端 Windows 服务显式使用 `SLICER_API_URL=http://127.0.0.1:3003` 与 `BAMBU_STUDIO_API_URL=http://127.0.0.1:3001`。
+- Docker/WSL2 首次安装若要求重启，脚本会写入 `C:\ProgramData\Bambuddy\slicer\setup-status.txt` 并注册 RunOnce，用户重启登录后自动继续；开始菜单提供“Bambuddy Slicer Setup”用于安全重试。切片容器停止但不删除镜像和数据。
+- 本次仅改变安装与部署，不携带虚拟打印机或开发数据库；正式安装仍从空数据目录开始。完整 staging、PowerShell 脚本错误路径、compose 配置、前端构建、ESLint 和 Inno Setup 全流程已验证。
+- 最新安装包：`installers/windows/build/output/bambuddy-0.2.4.9-windows-x64-setup.exe`，大小 197,077,818 字节，SHA-256：`CC0CAD153F6965C42C5CC6DB35DC3A3056146A85F4A1C4320348F61C7F89217D`。
+
 ## 打印机详情二维码与手机扫码刷新（2026-08-12）
 - 每台打印机的详情弹窗现在直接显示“手机换料扫码二维码”，可下载对应的 SVG 标签；二维码绑定当前真实打印机 ID，避免在耗材中心列表中找错设备。
 - 手机 App 扫描打印机二维码时，如果设备列表仍在加载，会等待服务器返回后再匹配，不再因查询尚未完成而立即显示“服务器找不到设备”。
@@ -11,7 +18,7 @@
 - 首次安装会在 `C:\ProgramData\Bambuddy` 创建空数据目录；若检测到旧数据，会移动到带时间戳的 `previous-data-*` 隔离目录，新的安装不会读取旧账号、产品、库存或打印机。初始化标记写入 `.fresh-install-complete`，后续升级保留用户正式数据。
 - 设置页新增“手机 App 连接”二维码（不包含账号密码），Android App 首次连接页支持扫描该二维码；调试 APK 已生成：`frontend/android/app/build/outputs/apk/debug/app-debug.apk`。
 - 打包校验：连接二维码测试 3/3、API 客户端回归 24/24、TypeScript/Vite 构建通过、Android `assembleDebug` 通过、Inno Setup 编译通过。npm 仍报告现有依赖审计告警，未在本次打包中强制升级依赖。
-- 自动切片仍复用现有 Bambu Studio/OrcaSlicer sidecar 配置。Windows 安装包不擅自捆绑第三方切片器二进制；正式使用前需在设置中配置可访问的 sidecar（本机 Docker 或局域网 sidecar），否则只能使用已有切片库/手动切片入口。
+- 自动切片仍复用现有 Bambu Studio/OrcaSlicer sidecar 配置；本次 Windows 安装流程已把 Docker Desktop 检测、sidecar 启动和健康检查纳入安装步骤，不再要求小白手工配置。第三方镜像仍在目标机首次安装时从官方/配置的 GHCR 地址拉取，不嵌入安装包。
 
 ## 备份与导入按钮可见性（2026-08-12）
 

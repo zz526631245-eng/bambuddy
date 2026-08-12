@@ -45,10 +45,14 @@ REM Service configuration
 REM Environment: point DATA_DIR + LOG_DIR at ProgramData, prepend our
 REM bin/ to PATH so ffmpeg/ffprobe are found by the shutil.which() lookup
 REM in backend/app/services/layer_timelapse.py.
+REM The installer starts these local sidecars before the app service, so keep
+REM the URLs explicit and use IPv4 loopback for reliable Windows resolution.
 "%NSSM%" set Bambuddy AppEnvironmentExtra ^
     "DATA_DIR=%DATA_DIR%" ^
     "LOG_DIR=%LOG_DIR%" ^
     "PORT=%PORT%" ^
+    "SLICER_API_URL=http://127.0.0.1:3003" ^
+    "BAMBU_STUDIO_API_URL=http://127.0.0.1:3001" ^
     "BAMBUDDY_PRODUCTION_BUILD=1" ^
     "PATH=%BIN_DIR%;%PATH%"
 
