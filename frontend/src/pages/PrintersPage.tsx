@@ -2331,7 +2331,10 @@ function PrinterCard({
         old ? { ...old, awaiting_plate_clear: false } : old
       );
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['printer-status', printer.id] });
       queryClient.invalidateQueries({ queryKey: ['queue', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['printer-consumable-targets'] });
+      queryClient.invalidateQueries({ queryKey: ['production-printer-status'] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -8041,7 +8044,12 @@ export function PrintersPage() {
     // Invalidate status queries for affected printers
     applicableIds.forEach(id => {
       queryClient.invalidateQueries({ queryKey: ['printerStatus', id] });
+      queryClient.invalidateQueries({ queryKey: ['printer-status', id] });
     });
+    if (action === 'clearPlate') {
+      queryClient.invalidateQueries({ queryKey: ['printer-consumable-targets'] });
+      queryClient.invalidateQueries({ queryKey: ['production-printer-status'] });
+    }
 
     setBulkActionPending(false);
     setBulkConfirmAction(null);

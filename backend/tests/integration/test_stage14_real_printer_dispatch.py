@@ -428,6 +428,7 @@ async def test_real_completion_enters_quality_then_allows_manual_accounting(
     db_session: AsyncSession,
     tmp_path: Path,
 ):
+    from backend.app.services.printer_manager import printer_manager
     from backend.app.services.production_real_dispatch import mark_real_job_finished, mark_real_job_started
 
     printer, _artifact, job, _old_queue = await _real_slice_fixture(db_session, tmp_path)
@@ -453,12 +454,26 @@ async def test_real_completion_enters_quality_then_allows_manual_accounting(
         json={"operation_id": "stage14-quality", "good_quantity": 1},
     )
     assert quality.status_code == 200, quality.text
+    # The production-order confirmation must release the same shared gate
+    # used by the printer page and the QR scanner.
+    printer_manager.set_awaiting_plate_clear(printer.id, True)
+    assert printer_manager.is_awaiting_plate_clear(printer.id)
+    pending_targets = await async_client.get("/api/v1/production/printer-consumables/targets")
+    assert pending_targets.status_code == 200, pending_targets.text
+    pending_target = next(item for item in pending_targets.json() if item["id"] == printer.id and item["kind"] == "printer")
+    assert pending_target["awaiting_plate_clear"] is True
     cleanup = await async_client.post(
         f"/api/v1/production/plate-jobs/{job.id}/workflow/cleanup",
         json={"operation_id": "stage14-cleanup"},
     )
     assert cleanup.status_code == 200, cleanup.text
     assert cleanup.json()["status"] == "completed"
+    assert not printer_manager.is_awaiting_plate_clear(printer.id)
+
+    targets = await async_client.get("/api/v1/production/printer-consumables/targets")
+    assert targets.status_code == 200, targets.text
+    target = next(item for item in targets.json() if item["id"] == printer.id and item["kind"] == "printer")
+    assert target["awaiting_plate_clear"] is False
 
 
 async def test_real_printer_is_preferred_over_matching_virtual_test_printer(

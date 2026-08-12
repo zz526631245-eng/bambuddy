@@ -267,3 +267,8 @@
 - 自动分配、真实切片派发、指定打印机队列入口和共享可用性检查均拒绝待清理打印机，避免新任务绑定或发送到未清理料盘。
 - `require_plate_clear` 已迁移为强制开启；旧的 `false` 设置会在启动迁移时改为 `true`，API 也不允许再次关闭。
 - 新增回归测试覆盖调度器、生产分配、真实派发、普通队列和设置接口；本次分支为 `codex/plate-clear-enforcement`。
+# Cleanup state synchronization (2026-08-12)
+- Production-order cleanup, printer-page cleanup, and QR scanner cleanup now share `printer_manager.awaiting_plate_clear`.
+- Real production cleanup commits the order first, then releases the linked printer; duplicate cleanup remains idempotent.
+- Consumable targets expose `awaiting_plate_clear`, and the QR page can call the existing clear-plate endpoint and refresh related queries.
+- Regression: Stage 11/14 `15 passed`; frontend lint and build passed.

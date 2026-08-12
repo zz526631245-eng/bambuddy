@@ -28,11 +28,25 @@ from backend.app.models.production import (
 )
 from backend.app.models.production_recipe import ProductionRecipe
 from backend.app.models.virtual_printer import VirtualPrinter
+from backend.app.services.printer_manager import printer_manager
 from backend.app.services.production_accounting import calculate_ledger, transition_order_status
 
 
 class ProductionOrderError(ValueError):
     pass
+
+
+async def _release_real_printer_plate(db: AsyncSession, job: PlateJob) -> None:
+    """Release the shared printer gate after an operator confirms cleanup.
+
+    Production-order cleanup and the printer/QR pages must all update the same
+    Bambuddy-side flag.  Virtual jobs intentionally do nothing here.
+    """
+    if job.virtual_printer_id is not None or job.queue_item_id is None:
+        return
+    queue_item = await db.get(PrintQueueItem, job.queue_item_id)
+    if queue_item is not None and queue_item.printer_id is not None:
+        printer_manager.set_awaiting_plate_clear(queue_item.printer_id, False)
 
 
 async def _next_order_number(db: AsyncSession) -> str:
@@ -593,6 +607,8 @@ async def advance_virtual_plate_job(
         existing = await db.get(PlateJob, plate_job_id)
         if existing is None:
             raise ProductionOrderError("打印任务不存在")
+        if action == "cleanup":
+            await _release_real_printer_plate(db, existing)
         return existing, True
 
     job = (
@@ -710,6 +726,11 @@ async def advance_virtual_plate_job(
                 return existing, True
         raise
     await db.refresh(job)
+    if action == "cleanup":
+        # Persist the production confirmation before releasing the shared
+        # scheduler gate.  The printer page and QR scanner observe this same
+        # Bambuddy-side state.
+        await _release_real_printer_plate(db, job)
     return job, False
 
 

@@ -159,3 +159,10 @@ npm.cmd run lint
 - `require_plate_clear` 已改为强制开启。启动迁移会把旧的 `false` 设置改为 `true`，设置 API 也不允许关闭该安全规则。
 - 回归测试：调度器清板测试 `32 passed`；Stage 14 真实派发测试 `9 passed`；普通打印队列测试 `88 passed`；设置接口测试 `5 passed`。
 - 前端设置页将清板规则显示为始终开启且不可关闭，避免操作员误以为可以绕过确认。
+# Cleanup state synchronization (2026-08-12)
+- Branch: `codex/sync-plate-clear`.
+- The production order, printer page, and QR scanner all write the same `printer_manager.awaiting_plate_clear` state.
+- Real production cleanup commits the order before releasing its linked printer. Virtual printers are unchanged.
+- The QR consumables page displays the shared state and reuses `POST /printers/{printer_id}/clear-plate`, refreshing related query caches after success.
+- Verification: Stage 11/14 `15 passed`; frontend lint/build passed.
+- Next: after restarting port 8019, verify on one real printer that new allocation stays blocked until cleanup is confirmed from either page.

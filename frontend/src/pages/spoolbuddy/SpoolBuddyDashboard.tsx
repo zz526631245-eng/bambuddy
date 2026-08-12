@@ -210,6 +210,9 @@ export function SpoolBuddyDashboard() {
       queryClient.setQueryData(['printerStatus', printerId], (old: PrinterStatus | undefined) =>
         old ? { ...old, awaiting_plate_clear: false } : old
       );
+      queryClient.invalidateQueries({ queryKey: ['printer-status', printerId] });
+      queryClient.invalidateQueries({ queryKey: ['printer-consumable-targets'] });
+      queryClient.invalidateQueries({ queryKey: ['production-printer-status'] });
       showToast(t('spoolbuddy.dashboard.plateClearedToast', 'Plate marked as cleared'), 'success');
     },
     onError: () => {

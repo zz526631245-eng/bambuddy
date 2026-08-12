@@ -68,6 +68,7 @@ from backend.app.schemas.production import (
     RealSliceRequest,
     SliceArtifactResponse,
 )
+from backend.app.services.printer_manager import printer_manager
 from backend.app.services.production_allocator import allocate_plate_jobs
 from backend.app.services.production_consumable_library import (
     create_batch,
@@ -188,10 +189,26 @@ async def list_printer_consumable_targets(
     printers = list((await db.execute(select(Printer).where(Printer.is_active.is_(True)).order_by(Printer.id))).scalars())
     virtuals = list((await db.execute(select(VirtualPrinter).order_by(VirtualPrinter.id))).scalars())
     return [
-        {"id": row.id, "name": row.name, "kind": "printer", "model": row.model, "loaded_filaments": row.loaded_filaments or []}
+        {
+            "id": row.id,
+            "name": row.name,
+            "kind": "printer",
+            "model": row.model,
+            "loaded_filaments": row.loaded_filaments or [],
+            "awaiting_plate_clear": bool(
+                row.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(row.id)
+            ),
+        }
         for row in printers
     ] + [
-        {"id": row.id, "name": row.name, "kind": "virtual_printer", "model": row.model, "loaded_filaments": row.loaded_filaments or []}
+        {
+            "id": row.id,
+            "name": row.name,
+            "kind": "virtual_printer",
+            "model": row.model,
+            "loaded_filaments": row.loaded_filaments or [],
+            "awaiting_plate_clear": False,
+        }
         for row in virtuals
     ]
 

@@ -89,7 +89,7 @@ export function ProductionOrderDetailPage() {
   const realSlice = useMutation({ mutationFn: (jobId: number) => productionApi.realSlice(jobId), onSuccess: refresh });
   const cancelJob = useMutation({ mutationFn: (jobId: number) => productionApi.cancelPlateJob(jobId), onSuccess: refresh });
   const deleteJob = useMutation({ mutationFn: (jobId: number) => productionApi.deletePlateJob(jobId), onSuccess: refresh });
-  const workflow = useMutation({ mutationFn: (input: {id:number;action:'prepare'|'start'|'finish'|'quality'|'cleanup';data?:{machine_result?:'completed'|'failed';good_quantity?:number}}) => productionApi.advanceWorkflow(input.id,input.action,input.data), onSuccess: () => { refresh(); queryClient.invalidateQueries({queryKey:['production-orders']}); } });
+  const workflow = useMutation({ mutationFn: (input: {id:number;action:'prepare'|'start'|'finish'|'quality'|'cleanup';data?:{machine_result?:'completed'|'failed';good_quantity?:number}}) => productionApi.advanceWorkflow(input.id,input.action,input.data), onSuccess: (_result, input) => { refresh(); queryClient.invalidateQueries({queryKey:['production-orders']}); if (input.action === 'cleanup') { queryClient.invalidateQueries({queryKey:['printer-consumable-targets']}); queryClient.invalidateQueries({queryKey:['production-printer-status']}); queryClient.invalidateQueries({queryKey:['printer-status']}); } } });
 
   if (isLoading || !order) return <div className="p-8 text-white">加载中…</div>;
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
