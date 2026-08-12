@@ -21,6 +21,7 @@ from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.production import OrderStatus, PlateJob, PlateJobStatus, ProductionRequirement
 from backend.app.services.production_eligibility import find_assignment
 from backend.app.services.production_printer_status import availability
+from backend.app.services.production_real_dispatch import auto_dispatch_real_slice_job
 from backend.app.services.production_slicer import slice_plate_job_real
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,7 @@ async def allocate_plate_jobs(
 
 
 class ProductionAllocator:
-    """Small recovery loop; assignment remains software-only and held."""
+    """Recovery loop for real allocation, slicing and automatic dispatch."""
 
     def __init__(self, interval_seconds: float = 5.0):
         self.interval_seconds = interval_seconds
@@ -203,17 +204,39 @@ class ProductionAllocator:
 
     async def run(self) -> None:
         self._running = True
-        logger.info("Production allocator started with real-printer allocation and held dispatch")
+        logger.info("Production allocator started with real-printer allocation and automatic dispatch")
         while self._running:
             try:
                 async with async_session() as db:
                     allocated = await allocate_plate_jobs(db)
                     for job in allocated:
                         if job.virtual_printer_id is None and job.queue_item_id is not None:
-                            await slice_plate_job_real(db, job.id)
+                            sliced = await slice_plate_job_real(db, job.id)
+                            await auto_dispatch_real_slice_job(db, sliced)
+                    await self._auto_dispatch_sliced_jobs(db)
             except Exception:
                 logger.exception("Production allocator pass failed")
             await asyncio.sleep(self.interval_seconds)
+
+    async def _auto_dispatch_sliced_jobs(self, db: AsyncSession) -> None:
+        """Retry automatic hand-off after a transient printer/scheduler error."""
+
+        query = (
+            select(PlateJob)
+            .where(
+                PlateJob.status == PlateJobStatus.ASSIGNED.value,
+                PlateJob.queue_item_id.is_not(None),
+                PlateJob.virtual_printer_id.is_(None),
+                PlateJob.slice_status == "succeeded",
+            )
+            .order_by(PlateJob.id)
+        )
+        jobs = list((await db.execute(query)).scalars().all())
+        for job in jobs:
+            try:
+                await auto_dispatch_real_slice_job(db, job)
+            except Exception:
+                logger.exception("Automatic real dispatch failed for plate job %s; will retry", job.id)
 
     def stop(self) -> None:
         self._running = False

@@ -355,7 +355,7 @@ async def upload_image(
 async def upload_product_file(
     product_id: int,
     file: UploadFile = File(...),
-    strategy: str = Form("fixed_plate"),
+    strategy: str = Form("auto_pack"),
     units_per_plate: float = Form(1),
     component_ids: str = Form("[]"),
     compatible_printer_models: str = Form("[]"),

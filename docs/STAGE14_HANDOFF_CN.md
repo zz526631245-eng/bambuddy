@@ -1,10 +1,11 @@
-# 阶段 14 交接：单台真实打印机受控发送
+# 阶段 14 交接：真实打印机自动匹配与既有队列发送
 
 日期：2026-08-12
 
 分支：`codex/feature-stage14-real-printer`
 
-实现提交：`0ffa6ef feat(stage14): add controlled real-printer dispatch`。
+基础实现提交：`0ffa6ef feat(stage14): add controlled real-printer dispatch`。
+本次修复提交：`85bc004 fix(stage14): auto-pack single products and dispatch eligible jobs`。
 
 ## 已完成
 
@@ -75,6 +76,12 @@ npm.cmd run build
 - 订单确认和后台分配都已接入真实切片；固定盘数量拆分时，重复调用单盘 3MF 始终传入源盘 `plate=0`，不再把第 2 个成品误当作源盘 2。
 - Windows 原生切片 sidecar 的 `localhost` 已统一转为 IPv4 回环地址；重排队后的分配日志使用唯一事件 ID，避免 SQLite 唯一键冲突导致分配回滚。
 - 当前实测订单 3 已自动分配到真实 `A1-1`，PETG/白色匹配，真实切片成功生成 6 个 `.gcode.3mf` 产物并保持在待打印队列；本次未发送打印命令。
+
+## 本次自动摆盘与自动入队修复（2026-08-12）
+
+- 单盘产品的新文件上传默认使用 `auto_pack`。用户只需上传一份源 3MF；切片器会根据模型尺寸和打印机规格在一盘内安排尽可能多的套数。多盘产品仍要求每张源盘分别上传，不做跨源盘复制。
+- 真实生产订单在真实打印机在线、空闲、型号和扫码耗材匹配、切片成功后，后台会自动调用同一套真实切片发送服务，取消源文件占位队列并创建非 `manual_start` 的真实产物队列项。既有调度器继续负责上传与启动。
+- `auto_dispatch_real_slice_job` 对多个切片产物保持安全等待，因为当前 `PlateJob.queue_item_id` 只能关联一个队列项；在多盘队列模型完成前不会只发送第一盘。现有已保存为 `fixed_plate` 的历史源文件不会被静默改写，需要重新上传或选择 `auto_pack` 后新建订单。
 
 本次验证：
 

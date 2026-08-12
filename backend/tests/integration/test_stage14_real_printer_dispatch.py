@@ -266,6 +266,41 @@ async def test_real_dispatch_requires_confirmation_and_replaces_stage9_hold(
     assert replay.json()["queue_item_id"] == new_queue.id
 
 
+async def test_auto_dispatch_replaces_held_queue_after_real_slice(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch,
+):
+    from backend.app.services.production_real_dispatch import auto_dispatch_real_slice_job
+
+    printer, artifact, job, old_queue = await _real_slice_fixture(db_session, tmp_path)
+    monkeypatch.setattr(
+        "backend.app.services.production_real_dispatch.printer_manager.is_connected",
+        lambda printer_id: printer_id == printer.id,
+    )
+
+    async def available(_db, target_type, target_id):
+        return target_type == "printer" and target_id == printer.id
+
+    monkeypatch.setattr("backend.app.services.production_real_dispatch.availability", available)
+    job.slice_status = "succeeded"
+    job.slice_result = {"real_slice": True, "slice_artifact_id": artifact.id, "plates": [{"slice_artifact_id": artifact.id}]}
+    await db_session.commit()
+
+    result = await auto_dispatch_real_slice_job(db_session, job)
+
+    assert result is not None
+    new_queue = await db_session.get(PrintQueueItem, result["queue_item_id"])
+    await db_session.refresh(old_queue)
+    await db_session.refresh(job)
+    assert old_queue.status == "cancelled"
+    assert new_queue is not None
+    assert new_queue.library_file_id == artifact.output_library_file_id
+    assert new_queue.manual_start is False
+    assert job.status == "ready"
+    assert result["manual_confirmation"] is False
+
+
 async def test_real_completion_enters_quality_then_allows_manual_accounting(
     async_client: AsyncClient,
     db_session: AsyncSession,

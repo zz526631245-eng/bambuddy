@@ -63,6 +63,19 @@ async def test_product_source_file_upload_is_product_owned(async_client):
 
 
 @pytest.mark.asyncio
+async def test_product_source_upload_defaults_to_auto_pack(async_client):
+    created = await async_client.post("/api/v1/products", json={"sku": "STAGE9-DEFAULT-AUTO", "name": "Default auto"})
+    assert created.status_code == 201
+    response = await async_client.post(
+        f"/api/v1/products/{created.json()['id']}/files",
+        files={"file": ("default-auto.3mf", _tiny_3mf(), "application/octet-stream")},
+        data={"filament_requirements": "[]"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["strategy"] == "auto_pack"
+
+
+@pytest.mark.asyncio
 async def test_multi_plate_fixed_file_records_source_plate_count_and_one_unit_per_plate(async_client):
     created = await async_client.post("/api/v1/products", json={"sku": "STAGE9-MULTI", "name": "Multi plate file"})
     product_id = created.json()["id"]

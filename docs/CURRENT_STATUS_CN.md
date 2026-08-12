@@ -8,7 +8,7 @@
 
 阶段 9 和阶段 10 的当前代码实现、本地回归和交接已完成。本文较早的“尚未完成”条目是历史记录，不能覆盖 `docs/handoff/stage10/README_CN.md` 中的最新结论；下一位维护者应以交接包、当前 Git 提交和 GitHub Actions 结果为准。阶段 14 的单机受控发送实现以本次交接结论为准。
 
-阶段 14 已在分支 `codex/feature-stage14-real-printer` 完成单台真实打印机受控发送实现和本地回归：真实状态由已有 MQTT 连接自动读取；用户在切片库中手工选择一台真实打印机并二次确认后，系统才把关联生产盘任务的真实切片结果交给既有队列。队列仍负责 FTP/MQTT 传输，MQTT 开始/完成事件会分别回写“打印中”和“待质检”，质检、报废数量与清板继续人工确认。虚拟任务、未确认任务和未连接/不可用真实机均被拒绝。尚待用户在一台真实机器上完成手工验收；未打标签，未构建安装包。
+阶段 14 已在分支 `codex/feature-stage14-real-printer` 完成真实打印机自动匹配、切片和既有队列发送实现：真实状态由已有 MQTT 连接自动读取；满足型号、扫码耗材、在线、空闲和切片成功条件后，生产订单会自动把真实切片结果交给既有队列。切片库仍保留手动发送独立切片结果的入口。队列负责 FTP/MQTT 传输，MQTT 开始/完成事件会分别回写“打印中”和“待质检”，质检、报废数量与清板继续人工确认。虚拟任务、未匹配任务和未连接/不可用真实机均不会发送。尚待用户在一台真实机器上完成手工验收；未打标签，未构建安装包。
 
 ## Git 状态
 
@@ -219,3 +219,11 @@
 - Fixed quantity splitting so every repeated one-plate 3MF is sent to the sidecar as source plate 0. Fixed Windows native sidecar access by normalizing localhost to IPv4 loopback, and made reallocation operation IDs unique.
 - Live verification: order 3 auto-assigned to real printer A1-1 with PETG/white, produced six real `.gcode.3mf` plate artifacts, and remains held in the print queue. No print was dispatched.
 - Focused backend regression: 26 passed; slicer endpoint/plate-index regression: 15 passed; Ruff, frontend build and lint passed. Existing unrelated frontend full-suite failures remain documented.
+
+### 单盘自动摆盘与真实任务自动入队（2026-08-12）
+
+- 产品源文件上传和产品详情页的新建默认策略改为 `auto_pack`；用户上传一份单盘 3MF 即可由切片器在同一盘内尽量复制摆放多套，不需要先生成多个相同文件。多盘产品仍按源盘文件组逐盘完成，不会复制源盘。
+- 真实订单在型号、扫码耗材材料/颜色、在线状态、空闲状态和真实切片均满足后，后台自动复用第 14 阶段的发送逻辑：取消原始源文件占位队列，创建真实 `.gcode.3mf` 队列项并解除 `manual_start`，交由原有调度器执行 FTP/MQTT。
+- 生产订单页已改为明确提示自动入队；切片库的手动发送入口仍保留，用于独立切片结果，不会发送虚拟打印机任务。
+- 为避免多产物任务只发送第一盘造成少打，当前 `PlateJob` 单队列关联在检测到多个切片产物时保持占位等待；现有历史 `fixed_plate` 文件需要重新上传一次或在产品页选择自动摆盘后再建单。
+- 回归新增：真实切片后自动替换占位队列、单盘上传默认 `auto_pack`；相关 Stage 9/10/14 测试和 Ruff 已通过。尚未构建安装包。

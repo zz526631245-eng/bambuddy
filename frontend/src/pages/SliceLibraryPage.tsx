@@ -41,7 +41,7 @@ export function SliceLibraryPage() {
     <div>
       <h1 className="text-3xl font-bold text-white flex items-center gap-3"><LibraryBig className="text-bambu-green" />切片库</h1>
       <p className="text-bambu-gray mt-2">真实切片成功后自动保存。相同源文件版本、摆盘策略和打印机参数会直接复用，不会重复切片。</p>
-      <p className="text-amber-300 text-sm mt-2">第14阶段：只有选择一台真实打印机并明确确认后，才会通过原有队列执行上传和打印。系统不会自动选择打印机，也不会发送到虚拟打印机。</p>
+      <p className="text-amber-300 text-sm mt-2">生产订单在真实打印机在线、型号和已扫码耗材匹配、切片成功且机器空闲时会自动进入原有队列。本页用于手动发送独立切片结果；不会发送到虚拟打印机。</p>
     </div>
     {resultMessage && <Card className="border-bambu-green/50"><CardContent className="py-4 text-bambu-green">{resultMessage}</CardContent></Card>}
     {isLoading && <Card><CardContent className="text-bambu-gray">正在读取切片库…</CardContent></Card>}

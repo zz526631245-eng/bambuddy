@@ -1,14 +1,17 @@
 """Stage 14 controlled dispatch to one real Bambu printer.
 
-The production domain never talks to MQTT or FTP directly.  This service only
-performs the explicit, audited hand-off into Bambuddy's existing print queue;
-the normal queue scheduler remains responsible for FTP upload and MQTT start.
+The production domain never talks to MQTT or FTP directly.  This service
+performs the audited hand-off into Bambuddy's existing print queue; the normal
+queue scheduler remains responsible for FTP upload and MQTT start.  Manual
+dispatch remains available from the slice library, while eligible production
+jobs use the same hand-off automatically.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +36,41 @@ REAL_ACTIVE_JOB_STATUSES = frozenset(
         PlateJobStatus.WAITING_CLEANUP.value,
     }
 )
+
+
+async def auto_dispatch_real_slice_job(db: AsyncSession, job: PlateJob) -> dict[str, Any] | None:
+    """Automatically hand one complete real slice to the existing queue.
+
+    Allocation and slicing happen in the production service, while this
+    helper performs the same audited queue replacement as the explicit Stage
+    14 endpoint.  A job with several output plates is left held because the
+    current ``PlateJob`` relation represents one queue item; auto-dispatching
+    only the first artifact would silently under-produce the order.
+    """
+
+    if job.virtual_printer_id is not None or job.status != PlateJobStatus.ASSIGNED.value:
+        return None
+    if job.slice_status != "succeeded" or job.queue_item_id is None:
+        return None
+    result = job.slice_result if isinstance(job.slice_result, dict) else {}
+    plates = [item for item in result.get("plates") or [] if isinstance(item, dict)]
+    if len(plates) > 1:
+        return None
+    artifact_id = result.get("slice_artifact_id")
+    if not isinstance(artifact_id, int) and plates:
+        artifact_id = plates[0].get("slice_artifact_id")
+    if not isinstance(artifact_id, int):
+        return None
+    held_queue = await db.get(PrintQueueItem, job.queue_item_id)
+    if held_queue is None or held_queue.status != "pending" or not held_queue.manual_start:
+        return None
+    payload = RealPrinterDispatchRequest(
+        operation_id=f"stage14-auto-dispatch-job-{job.id}-artifact-{artifact_id}",
+        printer_id=held_queue.printer_id,
+        plate_job_id=job.id,
+        confirm=True,
+    )
+    return await dispatch_real_slice_artifact(db, artifact_id, payload, manual_confirmation=False)
 
 
 def _artifact_ids(slice_result: dict | None) -> set[int]:
@@ -79,7 +117,7 @@ async def _response_from_operation(
         "printer_name": printer.name,
         "printer_model": printer.model,
         "queue_status": queue_item.status,
-        "manual_confirmation": True,
+        "manual_confirmation": bool(payload.get("manual_confirmation", True)),
         "transport": "existing_bambuddy_queue",
         "replayed": replayed,
     }
@@ -128,8 +166,9 @@ async def dispatch_real_slice_artifact(
     payload: RealPrinterDispatchRequest,
     *,
     actor_user_id: int | None = None,
+    manual_confirmation: bool = True,
 ) -> dict:
-    """Queue one real-printer print after an explicit user confirmation.
+    """Queue one real-printer print after an explicit or automatic hand-off.
 
     This is deliberately a single-printer operation.  It does not select a
     printer, connect to a device, upload a file, or call ``start_print``.  The
@@ -244,7 +283,7 @@ async def dispatch_real_slice_artifact(
                 "plate_job_id": job.id,
                 "queue_item_id": queue_item.id,
                 "printer_id": printer.id,
-                "manual_confirmation": True,
+                "manual_confirmation": manual_confirmation,
                 "transport": "existing_bambuddy_queue",
             },
         )
@@ -259,7 +298,7 @@ async def dispatch_real_slice_artifact(
         "printer_name": printer.name,
         "printer_model": printer.model,
         "queue_status": queue_item.status,
-        "manual_confirmation": True,
+        "manual_confirmation": manual_confirmation,
         "transport": "existing_bambuddy_queue",
         "replayed": False,
     }

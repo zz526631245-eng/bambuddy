@@ -15,7 +15,7 @@ function ProductImagePreview({ productId, image }: { productId: number; image: {
 }
 
 function ProductFileCard({ productId, product, refresh }: { productId: number; product: Product; refresh: () => void }) {
-  const [strategy, setStrategy] = useState<'fixed_plate' | 'auto_pack'>('fixed_plate');
+  const [strategy, setStrategy] = useState<'fixed_plate' | 'auto_pack'>('auto_pack');
   const [units, setUnits] = useState(1);
   const [material, setMaterial] = useState('PETG');
   const [color, setColor] = useState('黑色');

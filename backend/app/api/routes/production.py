@@ -1,8 +1,10 @@
-"""Stage 6 create/read-only production-domain API skeleton.
+"""Production-domain API routes.
 
-No endpoint in this module imports the scheduler, creates queue items, or
-communicates with a printer.
+Routes never communicate with a printer transport directly; eligible real
+jobs hand off to Bambuddy's existing queue and scheduler.
 """
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import FileResponse
@@ -92,7 +94,7 @@ from backend.app.services.production_printer_status import (
     heartbeat as record_printer_heartbeat,
     list_statuses as list_printer_statuses,
 )
-from backend.app.services.production_real_dispatch import dispatch_real_slice_artifact
+from backend.app.services.production_real_dispatch import auto_dispatch_real_slice_job, dispatch_real_slice_artifact
 from backend.app.services.production_slicer import (
     SlicePlanningError,
     _absolute_library_path,
@@ -101,6 +103,7 @@ from backend.app.services.production_slicer import (
 )
 
 router = APIRouter(prefix="/production", tags=["production"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/printer-status", response_model=list[ProductionPrinterStatusResponse])
@@ -665,7 +668,14 @@ async def confirm_order_plate_jobs(
         if job.virtual_printer_id is not None:
             await slice_plate_job(db, job.id)
         elif job.queue_item_id is not None:
-            await slice_plate_job_real(db, job.id)
+            sliced_job = await slice_plate_job_real(db, job.id)
+            try:
+                await auto_dispatch_real_slice_job(db, sliced_job)
+            except Exception:
+                # A printer can disconnect between allocation and slicing.
+                # Keep the held queue row and let the allocator retry rather
+                # than failing order confirmation after slicing succeeded.
+                logger.exception("Automatic real dispatch deferred for plate job %s", job.id)
     jobs = list(
         (
             await db.execute(
