@@ -3,6 +3,7 @@ import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Camera, CheckCircle2, Download, QrCode, ScanLine, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { ApiError } from '../api/client';
 import { productionApi } from '../api/production';
 import { Button } from '../components/Button';
 import { Card, CardContent, CardHeader } from '../components/Card';
@@ -216,7 +217,7 @@ export function PrinterConsumablesPage() {
         <label className="text-sm text-bambu-gray">扫描码<input aria-label="扫描码" required value={scanCode} onChange={event => setScanCode(event.target.value)} placeholder="扫码枪输入后回车" className={inputClass} /></label>
         <label className="text-sm text-bambu-gray">材料<input aria-label="材料" required value={material} onChange={event => setMaterial(event.target.value)} className={inputClass} /></label>
         <label className="text-sm text-bambu-gray">颜色<span className="mt-1 flex gap-2"><input aria-label="颜色值" type="color" value={colorHex} onChange={event => setColorHex(event.target.value)} className="h-10 w-14 bg-bambu-dark" /><input aria-label="颜色名称" value={colorName} onChange={event => setColorName(event.target.value)} placeholder="例如 红色" className="flex-1 bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white" /></span></label>
-        <div className="md:col-span-2 flex items-end gap-3"><Button type="button" variant="secondary" onClick={() => setCameraOpen(true)}><Camera size={16} />打开摄像头扫码</Button><Button type="submit" disabled={scan.isPending || !selected}><ScanLine size={16} />确认登记</Button>{message && <span className="text-sm text-bambu-green flex items-center gap-1"><CheckCircle2 size={16} />{message}</span>}{scan.error && <span className="text-sm text-red-400">{String(scan.error)}</span>}</div>
+        <div className="md:col-span-2 flex items-end gap-3"><Button type="button" variant="secondary" onClick={() => setCameraOpen(true)}><Camera size={16} />打开摄像头扫码</Button><Button type="submit" disabled={scan.isPending || !selected}><ScanLine size={16} />确认登记</Button>{message && <span className="text-sm text-bambu-green flex items-center gap-1"><CheckCircle2 size={16} />{message}</span>}{scan.error && <span className="text-sm text-red-400">{scan.error instanceof ApiError ? scan.error.message : String(scan.error)}</span>}</div>
       </form>
       {pendingScan && <div className="mt-3 rounded-lg border border-bambu-green bg-bambu-green/10 px-3 py-2 text-sm text-bambu-green">二维码识别成功，已填入耗材信息；请检查打印机和耗材后点击“确认登记”。</div>}
       <p className="text-xs text-bambu-gray mt-3">已锁定打印机后，耗材二维码识别成功会填入信息；点击“确认登记”后才写入服务器。</p>

@@ -60,7 +60,11 @@ const mockPrinterStatus = {
   remaining_time: 0,
   filename: null,
   wifi_signal: -50,
-  vt_tray: [],
+  vt_tray: [{
+    id: 254,
+    tray_type: 'PETG',
+    tray_color: '000000FF',
+  }],
 };
 
 const selectToolbarDropdownOption = async (triggerName: RegExp, optionName: RegExp) => {
@@ -111,7 +115,10 @@ describe('PrintersPage', () => {
       }),
       http.get('/api/v1/queue/', () => {
         return HttpResponse.json([]);
-      })
+      }),
+      http.get('/api/v1/production/printer-consumables', () => {
+        return HttpResponse.json([]);
+      }),
     );
   });
 
@@ -148,6 +155,37 @@ describe('PrintersPage', () => {
       await waitFor(() => {
         // Status should be shown - may vary based on state
         expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+      });
+    });
+
+    it('shows the scanned production consumable instead of MQTT external-tray colour', async () => {
+      server.use(
+        http.get('/api/v1/production/printer-consumables', () => HttpResponse.json([{
+          id: 11,
+          printer_id: 1,
+          virtual_printer_id: null,
+          printer_name: 'X1 Carbon',
+          virtual_printer_name: null,
+          spool_id: null,
+          scan_code: 'CU-TEST-WHITE',
+          material: 'PETG',
+          color_hex: 'FFFFFF',
+          color_name: 'White',
+          source: 'scanner',
+          operation_id: 'test-direct-feed',
+          is_active: true,
+          scanned_at: '2026-08-12T00:00:00Z',
+          replaced_at: null,
+        }])),
+      );
+
+      render(<PrintersPage />);
+
+      await waitFor(() => {
+        const card = screen.getByTestId('production-direct-consumable-1');
+        expect(card).toHaveTextContent('PETG');
+        expect(card).toHaveTextContent('White');
+        expect(card).toHaveAttribute('data-color-hex', 'FFFFFF');
       });
     });
   });

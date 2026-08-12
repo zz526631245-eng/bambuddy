@@ -19,6 +19,7 @@ from backend.app.models.production_printer_consumable import ProductionPrinterCo
 from backend.app.models.spool import Spool
 from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import PrinterConsumableScan
+from backend.app.services.printer_manager import printer_manager
 
 
 def _target_filter(payload: PrinterConsumableScan):
@@ -42,6 +43,57 @@ def _target_loaded_filament(material: str, color_hex: str, color_name: str | Non
             "source": "direct_scan",
         }
     ]
+
+
+def _normalise_material(value: object) -> str | None:
+    """Return a comparable material type without accepting empty telemetry."""
+
+    if value is None:
+        return None
+    material = str(value).strip().upper()
+    return material or None
+
+
+def _real_printer_external_material(printer_id: int) -> str:
+    """Read the already-connected printer's external-tray material for validation.
+
+    This intentionally does not open a new MQTT connection and it never writes
+    back to the printer.  The production direct-feed record remains the display
+    source; the device value is only a safety check before changing that record.
+    """
+
+    state = printer_manager.get_status(printer_id)
+    if state is None or not bool(getattr(state, "connected", False)):
+        raise ValueError("无法读取打印机当前外部耗材类型，请确认打印机已在线后重新扫码")
+
+    raw_data = getattr(state, "raw_data", None) or {}
+    trays = raw_data.get("vt_tray") if isinstance(raw_data, dict) else None
+    if isinstance(trays, dict):
+        trays = [trays]
+    if not isinstance(trays, list):
+        trays = []
+
+    tray_rows = [tray for tray in trays if isinstance(tray, dict)]
+    # Stage 12 direct feed uses Bambu's primary external-tray identifier 254.
+    external_tray = next((tray for tray in tray_rows if str(tray.get("id", "")) == "254"), None)
+    if external_tray is None and len(tray_rows) == 1:
+        external_tray = tray_rows[0]
+    material = _normalise_material(external_tray.get("tray_type") if external_tray else None)
+    if material is None:
+        raise ValueError(
+            "无法读取打印机当前外部耗材类型，请先在打印机或 Bambu Studio 中设置外部耗材类型后重新扫码"
+        )
+    return material
+
+
+def _validate_real_printer_material(printer_id: int, scanned_material: str) -> None:
+    printer_material = _real_printer_external_material(printer_id)
+    if printer_material == scanned_material:
+        return
+    raise ValueError(
+        f"耗材类型不匹配：打印机当前外部料槽为 {printer_material}，本次扫码为 {scanned_material}。"
+        f"请先在打印机或 Bambu Studio 中把外部耗材类型调整为 {scanned_material}，再重新扫码。"
+    )
 
 
 async def _serialize(binding: ProductionPrinterConsumable, db: AsyncSession, **extra) -> dict:
@@ -148,6 +200,9 @@ async def scan_direct_consumable(db: AsyncSession, payload: PrinterConsumableSca
 
     if effective_material is None or effective_color_hex is None:
         raise ValueError("material and color are required unless a consumable unit is scanned")
+
+    if payload.printer_id is not None:
+        _validate_real_printer_material(payload.printer_id, effective_material)
 
     current = (
         await db.execute(

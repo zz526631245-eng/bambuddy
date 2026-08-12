@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.printer import Printer
 from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
 from backend.app.models.virtual_printer import VirtualPrinter
+from backend.app.services import production_consumable_service
 from backend.app.services.production_printer_capabilities import capabilities_from_rows, match_filament_requirements
 
 
@@ -180,12 +183,21 @@ async def test_wrong_direct_feed_colour_does_not_match_required_colour(
 
 
 async def test_real_printer_binding_uses_same_direct_feed_contract(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
 ):
     printer = Printer(name="Stage 12 real placeholder", serial_number="ST12-REAL-001", ip_address="127.0.0.2", access_code="12345678", model="A1")
     db_session.add(printer)
     await db_session.commit()
     await db_session.refresh(printer)
+    monkeypatch.setattr(
+        production_consumable_service,
+        "printer_manager",
+        SimpleNamespace(get_status=lambda _: SimpleNamespace(
+            connected=True,
+            raw_data={"vt_tray": [{"id": 254, "tray_type": "PETG", "tray_color": "000000FF"}]},
+        )),
+        raising=False,
+    )
     response = await async_client.post(
         "/api/v1/production/printer-consumables/scan",
         json={
@@ -200,6 +212,48 @@ async def test_real_printer_binding_uses_same_direct_feed_contract(
     await db_session.refresh(printer)
     assert printer.loaded_filaments[0]["slot"] == 254
     assert response.json()["printer_name"] == "Stage 12 real placeholder"
+
+
+async def test_real_printer_rejects_scanned_material_type_that_differs_from_external_tray(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    printer = Printer(name="Stage 12 material check", serial_number="ST12-MATERIAL-001", ip_address="127.0.0.3", access_code="12345678", model="A1")
+    db_session.add(printer)
+    await db_session.commit()
+    await db_session.refresh(printer)
+    monkeypatch.setattr(
+        production_consumable_service,
+        "printer_manager",
+        SimpleNamespace(get_status=lambda _: SimpleNamespace(
+            connected=True,
+            raw_data={"vt_tray": [{"id": 254, "tray_type": "PETG", "tray_color": "000000FF"}]},
+        )),
+        raising=False,
+    )
+
+    response = await async_client.post(
+        "/api/v1/production/printer-consumables/scan",
+        json={
+            "operation_id": "stage12-material-mismatch",
+            "scan_code": "TAG-PLA-001",
+            "material": "PLA",
+            "color_hex": "FFFFFF",
+            "printer_id": printer.id,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == (
+        "耗材类型不匹配：打印机当前外部料槽为 PETG，本次扫码为 PLA。"
+        "请先在打印机或 Bambu Studio 中把外部耗材类型调整为 PLA，再重新扫码。"
+    )
+    await db_session.refresh(printer)
+    assert printer.loaded_filaments == []
+    assert (
+        await db_session.scalar(
+            select(ProductionPrinterConsumable).where(ProductionPrinterConsumable.printer_id == printer.id)
+        )
+    ) is None
 
 
 async def test_scanning_consumable_unit_auto_registers_its_material_and_colour(

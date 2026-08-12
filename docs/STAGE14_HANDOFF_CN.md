@@ -24,6 +24,13 @@
 - 二维码不含打印机 IP、序列号或访问码；手机页面依然遵守 HTTPS 与现有权限控制。
 - 新增前端单元测试 `printerConsumableQr.test.ts`，覆盖地址与目标键的编码。
 
+## 后续修复：扫码耗材显示与料型校验
+
+- 打印机页面的“外部耗材”卡片现在只显示当前有效的扫码生产耗材记录，不再用 MQTT `vt_tray` 的颜色或料型覆盖该记录。
+- 对真实打印机确认登记前，后端仅从已连接的 MQTT 状态快照读取外部料槽的材料类型做安全校验；颜色变化不会被拒绝，但 `PLA`、`PETG`、`TPU` 等料型不一致时会拒绝登记，并提示先在打印机或 Bambu Studio 中调整外部料型。
+- 打印机离线或设备尚未设置外部耗材料型时同样拒绝登记；本次实现不会写入真实打印机、不会新建 MQTT 连接，也不会发送打印。
+- 扫码页现在直接显示接口返回的中文错误，不再显示 `ApiError:` 前缀。
+
 ## 本地验证
 
 已通过：
@@ -44,6 +51,22 @@ npm.cmd run lint
 ```
 
 前端构建和 lint 均通过。测试使用替身连接谓词，不会打开 MQTT/FTP，也不会接触真实设备。
+
+本次补充验证：
+
+```powershell
+python -m pytest backend/tests/integration/test_stage12_direct_consumable_scan.py backend/tests/integration/test_stage12_consumable_library.py backend/tests/integration/test_stage13_printer_status.py backend/tests/integration/test_stage14_real_printer_dispatch.py -q
+# 14 passed
+
+ruff check backend/app/services/production_consumable_service.py backend/tests/integration/test_stage12_direct_consumable_scan.py
+# All checks passed
+
+Set-Location frontend
+npm.cmd test -- --run src/__tests__/pages/PrintersPage.test.tsx
+# 61 passed
+npm.cmd run build
+# passed
+```
 
 ## 未完成、风险与下一步
 

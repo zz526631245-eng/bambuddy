@@ -89,7 +89,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { api, discoveryApi, firmwareApi, withStreamToken, ApiError } from '../api/client';
 import { formatDateOnly, formatETA, formatDuration, parseUTCDate } from '../utils/date';
-import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
+import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, AMSTray, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
+import { productionApi, type PrinterConsumable } from '../api/production';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -1728,6 +1729,7 @@ const DRYING_PRESETS: Record<string, { n3f: number; n3s: number; n3f_hours: numb
 
 function PrinterCard({
   printer,
+  directConsumable,
   hideIfDisconnected,
   maintenanceInfo,
   viewMode = 'expanded',
@@ -1759,6 +1761,7 @@ function PrinterCard({
   fanSpeedPresets = FAN_SPEED_DEFAULTS,
 }: {
   printer: Printer;
+  directConsumable?: PrinterConsumable;
   hideIfDisconnected?: boolean;
   maintenanceInfo?: PrinterMaintenanceInfo;
   viewMode?: ViewMode;
@@ -1898,6 +1901,29 @@ function PrinterCard({
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
+
+  // The production direct-feed record is the authoritative consumable shown
+  // on this page. MQTT virtual-tray data remains available only for safety
+  // checks and existing device controls; it must not overwrite the scanned
+  // material/colour that operators registered for production.
+  const displayExternalTrays: AMSTray[] = directConsumable ? [{
+    id: 254,
+    tray_color: directConsumable.color_hex,
+    tray_type: directConsumable.material,
+    tray_sub_brands: directConsumable.color_name ?? null,
+    tray_id_name: null,
+    tray_info_idx: null,
+    remain: 0,
+    k: null,
+    cali_idx: null,
+    tag_uid: null,
+    tray_uuid: null,
+    nozzle_temp_min: null,
+    nozzle_temp_max: null,
+    drying_temp: null,
+    drying_time: null,
+    state: null,
+  }] : [];
 
   // Check for firmware updates (cached for 5 minutes, can be disabled in settings)
   const { data: firmwareInfo } = useQuery({
@@ -4400,7 +4426,7 @@ function PrinterCard({
             })()}
 
             {/* AMS Units - 2-Column Grid Layout */}
-            {(amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
+            {(amsData?.length > 0 || displayExternalTrays.length > 0) && viewMode === 'expanded' && (() => {
               // Separate regular AMS (4-tray) from HT AMS (1-tray)
               const regularAms = amsData.filter(ams => ams.tray.length > 1);
               const htAms = amsData.filter(ams => ams.tray.length === 1);
@@ -5231,14 +5257,21 @@ function PrinterCard({
                           </div>
                         );
                       })}
-                      {/* External spool(s) - grouped in one card like regular AMS */}
-                      {status.vt_tray.length > 0 && (
-                        <div style={getAmsCardStyle(status.vt_tray.length)} className="min-w-0 p-2 bg-bambu-dark rounded-[10px] space-y-1">
+                      {/* Direct-feed display intentionally comes from the scanned production record. */}
+                      {displayExternalTrays.length > 0 && (
+                        <div
+                          data-testid={`production-direct-consumable-${printer.id}`}
+                          data-color-hex={directConsumable?.color_hex}
+                          style={getAmsCardStyle(displayExternalTrays.length)}
+                          className="min-w-0 p-2 bg-bambu-dark rounded-[10px] space-y-1"
+                        >
                           <div className="flex w-full min-h-7 items-center gap-1.5 rounded-lg bg-bambu-dark-secondary px-2 py-1">
                             <span className="block min-w-0 flex-1 truncate text-[10px] text-white font-medium">{t('printers.external')}</span>
+                            <span className="text-[10px] text-white font-medium truncate">{directConsumable?.material}</span>
+                            {directConsumable?.color_name && <span className="text-[10px] text-bambu-gray truncate">{directConsumable.color_name}</span>}
                           </div>
-                          <div className={`grid w-full ${status.vt_tray.length > 1 ? 'grid-cols-[repeat(2,minmax(3.5rem,1fr))]' : 'grid-cols-[minmax(3.5rem,1fr)]'} gap-1`}>
-                            {[...status.vt_tray].sort((a, b) => (a.id ?? 254) - (b.id ?? 254)).map((extTray) => {
+                          <div className={`grid w-full ${displayExternalTrays.length > 1 ? 'grid-cols-[repeat(2,minmax(3.5rem,1fr))]' : 'grid-cols-[minmax(3.5rem,1fr)]'} gap-1`}>
+                            {[...displayExternalTrays].sort((a, b) => (a.id ?? 254) - (b.id ?? 254)).map((extTray) => {
                               const extTrayId = extTray.id ?? 254;
                               // On dual-nozzle (H2C/H2D), tray_now=254 means "external spool"
                               // generically — use active_extruder to determine L vs R:
@@ -7713,6 +7746,20 @@ export function PrintersPage() {
     queryFn: api.getPrinters,
   });
 
+  const { data: directConsumables } = useQuery({
+    queryKey: ['printer-consumables'],
+    queryFn: productionApi.listConsumables,
+    enabled: hasPermission('plate_jobs:read'),
+  });
+
+  const directConsumableByPrinterId = useMemo(() => {
+    const result = new Map<number, PrinterConsumable>();
+    for (const consumable of directConsumables ?? []) {
+      if (consumable.printer_id != null) result.set(consumable.printer_id, consumable);
+    }
+    return result;
+  }, [directConsumables]);
+
   // Fetch the UI-rendering subset of settings. Uses /ui-preferences (not /settings)
   // so users with printers:read but no settings:read still get the values needed
   // to render the clear-plate button, drying presets, AMS thresholds, etc. (#1293).
@@ -8697,6 +8744,7 @@ export function PrintersPage() {
                     <PrinterCard
                       key={printer.id}
                       printer={printer}
+                      directConsumable={directConsumableByPrinterId.get(printer.id)}
                       hideIfDisconnected={hideDisconnected}
                       maintenanceInfo={maintenanceByPrinter[printer.id]}
                       viewMode={viewMode}
@@ -8746,6 +8794,7 @@ export function PrintersPage() {
             <PrinterCard
               key={printer.id}
               printer={printer}
+              directConsumable={directConsumableByPrinterId.get(printer.id)}
               hideIfDisconnected={hideDisconnected}
               maintenanceInfo={maintenanceByPrinter[printer.id]}
               viewMode={viewMode}
