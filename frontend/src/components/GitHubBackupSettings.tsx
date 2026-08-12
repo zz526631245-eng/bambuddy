@@ -1045,7 +1045,7 @@ export function GitHubBackupSettings() {
                 }}
               >
                 <Download className="w-4 h-4" />
-                {t('backup.download')}
+                {t('backup.downloadBackupLabel')}
               </Button>
             </div>
 
@@ -1081,7 +1081,7 @@ export function GitHubBackupSettings() {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Upload className="w-4 h-4" />
-                {t('backup.restore')}
+                {t('backup.restoreConfirmButton')}
               </Button>
             </div>
 
