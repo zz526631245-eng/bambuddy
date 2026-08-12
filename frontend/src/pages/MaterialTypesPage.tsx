@@ -6,6 +6,7 @@ import { materialsApi, type MaterialInput, type MaterialType } from '../api/mate
 import { productionApi, type ConsumableUnit } from '../api/production';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
+import { HubNav } from '../components/HubNav';
 import { isLoopbackPage, mobileBaseUrl } from '../utils/mobileUrl';
 
 const inputClass = 'bg-bambu-dark border border-bambu-gray-dark rounded-lg px-3 py-2 text-white min-w-0';
@@ -65,6 +66,11 @@ export function MaterialTypesPage() {
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
     {isLoopbackPage() && !import.meta.env.VITE_PUBLIC_BASE_URL && <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">当前页面是 127.0.0.1，生成的二维码手机无法访问。请使用手机可访问的 HTTPS 地址打开本页面，或配置 VITE_PUBLIC_BASE_URL。</div>}
     <div><h1 className="text-3xl font-bold text-white">材料类型</h1><p className="text-bambu-gray mt-1">每种材料类型单独管理耗材卷数量、入库状态和唯一二维码。</p></div>
+    <HubNav ariaLabel="耗材中心导航" items={[
+      { to: '/material-types', label: '材料类型' },
+      { to: '/consumable-library', label: '扫码入库' },
+      { to: '/printer-consumables', label: '打印机绑定' },
+    ]} />
     <Card><CardContent><form onSubmit={submit} className="grid sm:grid-cols-2 lg:grid-cols-7 gap-3">
       <input required placeholder="编码" value={form.code} onChange={event => setForm({ ...form, code: event.target.value })} className={inputClass} />
       <input required placeholder="材料 PLA" value={form.material} onChange={event => setForm({ ...form, material: event.target.value })} className={inputClass} />

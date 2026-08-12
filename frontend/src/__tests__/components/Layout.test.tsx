@@ -120,7 +120,7 @@ describe('Layout', () => {
       await waitFor(() => {
         const sidebar = document.querySelector('aside');
         expect(sidebar).toBeInTheDocument();
-        expect(sidebar?.querySelector('a[href="/inventory"]')).toBeInTheDocument();
+        expect(sidebar?.querySelector('a[href="/settings"]')).toBeInTheDocument();
       });
 
       expect(document.querySelector('aside a[href="/"]')).toBeNull();
@@ -148,7 +148,8 @@ describe('Layout', () => {
       await waitFor(() => {
         const sidebar = document.querySelector('aside');
         expect(sidebar).toBeInTheDocument();
-        expect(sidebar?.querySelector('a[href="/inventory"]')).toBeInTheDocument();
+        expect(sidebar?.querySelector('a[href="/settings"]')).toBeInTheDocument();
+        expect(sidebar?.querySelector('a[href="/inventory"]')).toBeNull();
       });
 
       await waitFor(() => {
@@ -454,13 +455,13 @@ describe('Layout', () => {
         // entry (Files / Archives) confirms the sidebar finished mounting.
         const sidebar = document.querySelector('aside');
         expect(sidebar).toBeInTheDocument();
-        expect(sidebar?.querySelector('a[href="/files"]')).toBeInTheDocument();
+        expect(sidebar?.querySelector('a[href="/archives"]')).toBeInTheDocument();
       });
 
       expect(findMakerWorldNavLink()).toBeNull();
     });
 
-    it('shows the MakerWorld nav entry when the user has makerworld:view', async () => {
+    it('keeps the MakerWorld entry out of the primary sidebar', async () => {
       enableAuthWithUser([
         'library:read',
         'archives:read',
@@ -470,9 +471,8 @@ describe('Layout', () => {
 
       render(<Layout />);
 
-      await waitFor(() => {
-        expect(findMakerWorldNavLink()).toBeInTheDocument();
-      });
+      await waitFor(() => expect(document.querySelector('aside')).toBeInTheDocument());
+      expect(findMakerWorldNavLink()).toBeNull();
     });
   });
 
@@ -507,24 +507,24 @@ describe('Layout', () => {
     const sidebarLink = (href: string) =>
       document.querySelector(`aside a[href="${href}"]`);
 
-    it('shows Files in the sidebar when the user only has library:read_own', async () => {
+    it('keeps Files out of the primary sidebar for library:read_own users', async () => {
       enableAuthWithUser(['library:read_own']);
 
       render(<Layout />);
 
       await waitFor(() => {
         expect(document.querySelector('aside')).toBeInTheDocument();
-        expect(sidebarLink('/files')).toBeInTheDocument();
+        expect(sidebarLink('/files')).toBeNull();
       });
     });
 
-    it('shows Files in the sidebar when the user only has library:read_all', async () => {
+    it('keeps Files out of the primary sidebar for library:read_all users', async () => {
       enableAuthWithUser(['library:read_all']);
 
       render(<Layout />);
 
       await waitFor(() => {
-        expect(sidebarLink('/files')).toBeInTheDocument();
+        expect(sidebarLink('/files')).toBeNull();
       });
     });
 
@@ -538,13 +538,13 @@ describe('Layout', () => {
       });
     });
 
-    it('shows Queue in the sidebar when the user only has queue:read_own', async () => {
+    it('keeps Queue out of the primary sidebar for queue:read_own users', async () => {
       enableAuthWithUser(['queue:read_own']);
 
       render(<Layout />);
 
       await waitFor(() => {
-        expect(sidebarLink('/queue')).toBeInTheDocument();
+        expect(sidebarLink('/queue')).toBeNull();
       });
     });
 

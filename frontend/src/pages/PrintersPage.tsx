@@ -93,6 +93,7 @@ import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, AMSTray, Discovere
 import { productionApi, type PrinterConsumable } from '../api/production';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
+import { HubNav } from '../components/HubNav';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { BulkPrinterToolbar, type PrinterState } from '../components/BulkPrinterToolbar';
 import { FileManagerModal } from '../components/FileManagerModal';
@@ -8571,6 +8572,14 @@ export function PrintersPage() {
             {t('printers.title')}
           </h1>
           <StatusSummaryBar printers={printers} />
+          <div className="mt-3">
+            <HubNav ariaLabel="打印机相关功能" items={[
+              { to: '/', label: '打印机' },
+              { to: '/printer-profiles', label: '打印机配置' },
+              { to: '/maintenance', label: '维护' },
+              { to: '/production-printer-status', label: '生产状态' },
+            ]} />
+          </div>
         </div>
         <div ref={toolbarRef} className="relative flex items-center gap-2">
           {/* Only show search bar when printers exist */}

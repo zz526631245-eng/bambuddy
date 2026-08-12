@@ -7,6 +7,7 @@ import { productionApi } from '../api/production';
 import { productsApi } from '../api/products';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
+import { HubNav } from '../components/HubNav';
 
 const statusText: Record<string, string> = { draft: '草稿', planned: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消' };
 const imageUrl = (productId: number, imageId: number) => `/api/v1/products/${productId}/images/${imageId}/file`;
@@ -42,6 +43,12 @@ export function ProductionOrdersPage() {
 
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
     <div className="flex flex-wrap justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">生产订单</h1><p className="text-bambu-gray mt-1">选择产品和产品源文件，系统根据文件版本创建生产快照。</p></div><Button onClick={() => setShow(!show)}><Plus size={18} />新建生产订单</Button></div>
+    <HubNav ariaLabel="生产中心导航" items={[
+      { to: '/production-orders', label: '生产订单' },
+      { to: '/queue', label: '打印队列' },
+      { to: '/production-printer-status', label: '打印机状态' },
+      { to: '/slice-library', label: '切片库' },
+    ]} />
     {show && <Card><CardContent><form onSubmit={submit} className="grid md:grid-cols-3 gap-3">
       <p className="text-sm text-bambu-gray md:col-span-3">订单编号由系统自动生成，例如 PO-20260720-001。</p>
       <Button type="button" variant="secondary" className="justify-start" onClick={() => { setProductPickerOpen(true); setProductSearch(''); }}>{selectedProduct ? `${selectedProduct.sku} · ${selectedProduct.name}` : '选择产品'}</Button>
