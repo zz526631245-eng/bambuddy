@@ -33,6 +33,7 @@ from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import (
     ConsumableBatchCreate,
     ConsumableBatchResponse,
+    ConsumableInventoryGroup,
     ConsumableLibraryScan,
     ConsumableLibrarySummary,
     ConsumableUnitResponse,
@@ -72,6 +73,7 @@ from backend.app.services.printer_manager import printer_manager
 from backend.app.services.production_allocator import allocate_plate_jobs
 from backend.app.services.production_consumable_library import (
     create_batch,
+    inventory_summary,
     list_units,
     scan_unit,
     summary,
@@ -153,6 +155,14 @@ async def get_consumable_library_summary(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
     return await summary(db)
+
+
+@router.get("/consumable-library/inventory-summary", response_model=list[ConsumableInventoryGroup])
+async def get_consumable_inventory_summary(
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    return await inventory_summary(db)
 
 
 @router.post("/consumable-library/batches", response_model=ConsumableBatchResponse, status_code=status.HTTP_201_CREATED)

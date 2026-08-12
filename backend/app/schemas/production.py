@@ -177,6 +177,22 @@ class ConsumableLibrarySummary(BaseModel):
     total: int
 
 
+class ConsumableInventoryGroup(BaseModel):
+    """Server-calculated inventory totals for one brand/material/colour."""
+
+    brand: str | None
+    material: str
+    subtype: str | None
+    color_name: str | None
+    color_hex: str | None
+    generated: int
+    in_stock: int
+    bound: int
+    depleted: int
+    scrapped: int
+    total: int
+
+
 PRINTER_STATUS_STATES = Literal["unknown", "idle", "printing", "paused", "finished", "offline", "error", "maintenance"]
 
 

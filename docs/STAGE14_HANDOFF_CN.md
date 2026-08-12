@@ -166,3 +166,9 @@ npm.cmd run lint
 - The QR consumables page displays the shared state and reuses `POST /printers/{printer_id}/clear-plate`, refreshing related query caches after success.
 - Verification: Stage 11/14 `15 passed`; frontend lint/build passed.
 - Next: after restarting port 8019, verify on one real printer that new allocation stays blocked until cleanup is confirmed from either page.
+# Consumable inventory summary view (2026-08-12)
+- Branch: `codex/inventory-summary-view`.
+- Added `GET /api/v1/production/consumable-library/inventory-summary`, grouping rolls by brand, material type/subtype, and colour on the backend.
+- The inventory screen displays compact grouped cards instead of requiring the operator to scan a long list of individual QR rolls. Counts include in-stock, bound, pending receipt, depleted, scrapped, and total.
+- Scan-in and depletion invalidate both the existing total summary and the grouped inventory summary.
+- Verification: Stage 12 consumable tests `2 passed`; backend Ruff and frontend lint/build passed.

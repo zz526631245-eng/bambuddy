@@ -64,6 +64,10 @@ export interface ConsumableUnit {
   received_at?:string|null; depleted_at?:string|null; scrapped_at?:string|null; replayed?:boolean;
 }
 export interface ConsumableSummary { generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; }
+export interface ConsumableInventoryGroup {
+  brand?:string|null; material:string; subtype?:string|null; color_name?:string|null; color_hex?:string|null;
+  generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number;
+}
 export type ProductionPrinterState = 'unknown'|'idle'|'printing'|'paused'|'finished'|'offline'|'error'|'maintenance';
 export interface ProductionPrinterStatus {
   id?:number|null; target_key:string; target_type:'printer'|'virtual_printer'; target_id:number;
@@ -114,6 +118,7 @@ export const productionApi={
     request<PrinterConsumable & { replayed:boolean; replaced_id?:number|null }>('/production/printer-consumables/scan',{method:'POST',body:JSON.stringify(data)}),
   listConsumableUnits:(status?:string)=>request<ConsumableUnit[]>('/production/consumable-library' + (status ? '?status_filter=' + encodeURIComponent(status) : '')),
   consumableSummary:()=>request<ConsumableSummary>('/production/consumable-library/summary'),
+  consumableInventorySummary:()=>request<ConsumableInventoryGroup[]>('/production/consumable-library/inventory-summary'),
   generateConsumableBatch:(data:{operation_id:string;material_type_id:number;quantity:number;remaining_weight_g?:number|null})=>
     request<{batch_id:string;items:ConsumableUnit[]}>('/production/consumable-library/batches',{method:'POST',body:JSON.stringify(data)}),
   scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:'receive'|'deplete'|'scrap';remaining_weight_g?:number;storage_location?:string|null})=>

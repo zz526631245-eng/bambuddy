@@ -72,6 +72,13 @@ async def test_generate_unique_units_and_receive_is_idempotent(
     assert material_stats["received"] == 1
     assert [unit["unit_code"] for unit in material_stats["units"]] == [units[2]["unit_code"], units[1]["unit_code"], units[0]["unit_code"]]
 
+    inventory = await async_client.get("/api/v1/production/consumable-library/inventory-summary")
+    assert inventory.status_code == 200, inventory.text
+    grouped = next(item for item in inventory.json() if item["material"] == "PLA" and item["brand"] == "3DR")
+    assert grouped["in_stock"] == 1
+    assert grouped["generated"] == 2
+    assert grouped["total"] == 3
+
 
 async def test_bound_unit_depletion_releases_direct_printer_binding(
     async_client: AsyncClient,

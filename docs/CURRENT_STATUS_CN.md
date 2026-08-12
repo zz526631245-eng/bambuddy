@@ -272,3 +272,8 @@
 - Real production cleanup commits the order first, then releases the linked printer; duplicate cleanup remains idempotent.
 - Consumable targets expose `awaiting_plate_clear`, and the QR page can call the existing clear-plate endpoint and refresh related queries.
 - Regression: Stage 11/14 `15 passed`; frontend lint and build passed.
+# Consumable inventory summary view (2026-08-12)
+- Added a server-calculated inventory summary grouped by brand, material type/subtype, and colour.
+- The consumable library now shows one compact card per specification with in-stock, bound, pending-receipt, depleted, scrapped, and total roll counts.
+- QR-unit scan-in and depletion still use the existing lifecycle; successful scans invalidate the summary immediately.
+- Verification: Stage 12 consumable tests `2 passed`; backend Ruff and frontend lint/build passed.

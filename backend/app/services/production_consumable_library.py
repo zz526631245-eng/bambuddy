@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.material_type import MaterialType
@@ -203,6 +203,66 @@ async def summary(db: AsyncSession) -> dict:
         "scrapped": counts[CONSUMABLE_SCRAPPED],
         "total": len(rows),
     }
+
+
+async def inventory_summary(db: AsyncSession) -> list[dict]:
+    """Group all generated rolls by their material master identity.
+
+    Counts stay in the backend so the inventory screen remains a display of
+    authoritative totals instead of re-counting individual QR units in the
+    browser.
+    """
+
+    status_counts = {
+        status: func.sum(
+            case((ProductionConsumableUnit.status == status, 1), else_=0)
+        ).label(status)
+        for status in (
+            CONSUMABLE_GENERATED,
+            CONSUMABLE_IN_STOCK,
+            CONSUMABLE_BOUND,
+            CONSUMABLE_DEPLETED,
+            CONSUMABLE_SCRAPPED,
+        )
+    }
+    result = await db.execute(
+        select(
+            MaterialType.brand,
+            MaterialType.material,
+            MaterialType.subtype,
+            MaterialType.color_name,
+            MaterialType.color_hex,
+            *status_counts.values(),
+            func.count(ProductionConsumableUnit.id).label("total"),
+        )
+        .join(MaterialType, MaterialType.id == ProductionConsumableUnit.material_type_id)
+        .group_by(
+            MaterialType.brand,
+            MaterialType.material,
+            MaterialType.subtype,
+            MaterialType.color_name,
+            MaterialType.color_hex,
+        )
+        .order_by(
+            MaterialType.brand,
+            MaterialType.material,
+            MaterialType.subtype,
+            MaterialType.color_name,
+            MaterialType.color_hex,
+        )
+    )
+    return [
+        {
+            "brand": row.brand,
+            "material": row.material,
+            "subtype": row.subtype,
+            "color_name": row.color_name,
+            "color_hex": row.color_hex,
+            **{status: int(getattr(row, status) or 0) for status in status_counts},
+            "total": int(row.total or 0),
+        }
+        for row in result
+    ]
 
 
 async def summary_by_material_type(db: AsyncSession) -> dict[int, dict]:
