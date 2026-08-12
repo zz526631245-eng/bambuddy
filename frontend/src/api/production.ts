@@ -60,13 +60,27 @@ export interface PrinterConsumableTarget {
 export interface ConsumableUnit {
   id:number; material_type_id:number; material_type_code:string; material:string; brand?:string|null;
   color_name?:string|null; color_hex?:string|null; unit_code:string; status:string; label_batch_id:string;
-  remaining_weight_g?:number|null; storage_location?:string|null; generated_at:string;
+  initial_weight_g?:number|null; unit_price?:number|null; remaining_weight_g?:number|null; storage_location?:string|null; generated_at:string;
   received_at?:string|null; depleted_at?:string|null; scrapped_at?:string|null; replayed?:boolean;
 }
 export interface ConsumableSummary { generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number; }
 export interface ConsumableInventoryGroup {
   brand?:string|null; material:string; subtype?:string|null; color_name?:string|null; color_hex?:string|null;
   generated:number; in_stock:number; bound:number; depleted:number; scrapped:number; total:number;
+}
+export interface ConsumableConsumptionGroup {
+  brand?:string|null; material:string; subtype?:string|null; color_name?:string|null; color_hex?:string|null;
+  consumed_g:number; cost:number; event_count:number;
+}
+export interface ConsumableUsageEvent {
+  id:number; consumable_unit_id?:number|null; unit_code?:string|null; material_type_code?:string|null;
+  brand?:string|null; material?:string|null; subtype?:string|null; color_name?:string|null; color_hex?:string|null;
+  queue_item_id?:number|null; plate_job_id?:number|null; printer_id?:number|null;
+  consumed_g:number; cost:number; source:string; recorded_at:string;
+}
+export interface ConsumableConsumptionSummary {
+  period:string; start_date:string; end_date:string; consumed_g:number; cost:number; event_count:number;
+  groups:ConsumableConsumptionGroup[]; events:ConsumableUsageEvent[];
 }
 export type ProductionPrinterState = 'unknown'|'idle'|'printing'|'paused'|'finished'|'offline'|'error'|'maintenance';
 export interface ProductionPrinterStatus {
@@ -119,7 +133,14 @@ export const productionApi={
   listConsumableUnits:(status?:string)=>request<ConsumableUnit[]>('/production/consumable-library' + (status ? '?status_filter=' + encodeURIComponent(status) : '')),
   consumableSummary:()=>request<ConsumableSummary>('/production/consumable-library/summary'),
   consumableInventorySummary:()=>request<ConsumableInventoryGroup[]>('/production/consumable-library/inventory-summary'),
-  generateConsumableBatch:(data:{operation_id:string;material_type_id:number;quantity:number;remaining_weight_g?:number|null})=>
+  consumableConsumptionSummary:(params?:{period?:string;start_date?:string;end_date?:string})=>{
+    const query = new URLSearchParams();
+    if (params?.period) query.set('period', params.period);
+    if (params?.start_date) query.set('start_date', params.start_date);
+    if (params?.end_date) query.set('end_date', params.end_date);
+    return request<ConsumableConsumptionSummary>('/production/consumable-library/consumption-summary' + (query.toString() ? '?' + query.toString() : ''));
+  },
+  generateConsumableBatch:(data:{operation_id:string;material_type_id:number;quantity:number;initial_weight_g?:number|null;unit_price?:number|null;remaining_weight_g?:number|null})=>
     request<{batch_id:string;items:ConsumableUnit[]}>('/production/consumable-library/batches',{method:'POST',body:JSON.stringify(data)}),
   scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:'receive'|'deplete'|'scrap';remaining_weight_g?:number;storage_location?:string|null})=>
     request<ConsumableUnit>('/production/consumable-library/scan',{method:'POST',body:JSON.stringify(data)}),

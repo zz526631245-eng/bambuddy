@@ -5,8 +5,9 @@ jobs hand off to Bambuddy's existing queue and scheduler.
 """
 
 import logging
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +34,7 @@ from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import (
     ConsumableBatchCreate,
     ConsumableBatchResponse,
+    ConsumableConsumptionSummary,
     ConsumableInventoryGroup,
     ConsumableLibraryScan,
     ConsumableLibrarySummary,
@@ -80,6 +82,7 @@ from backend.app.services.production_consumable_library import (
     summary_by_material_type,
 )
 from backend.app.services.production_consumable_service import list_bindings, scan_direct_consumable
+from backend.app.services.production_consumption import consumption_summary
 from backend.app.services.production_order_service import (
     ProductionOrderError,
     advance_virtual_plate_job,
@@ -163,6 +166,20 @@ async def get_consumable_inventory_summary(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
     return await inventory_summary(db)
+
+
+@router.get("/consumable-library/consumption-summary", response_model=ConsumableConsumptionSummary)
+async def get_consumable_consumption_summary(
+    period: str = Query(default="30d"),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
+):
+    try:
+        return await consumption_summary(db, period=period, start_date=start_date, end_date=end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/consumable-library/batches", response_model=ConsumableBatchResponse, status_code=status.HTTP_201_CREATED)

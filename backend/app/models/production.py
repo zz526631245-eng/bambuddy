@@ -67,6 +67,7 @@ PRODUCTION_TABLE_NAMES = {
     "material_type_spool_mappings",
     "production_consumable_units",
     "production_printer_consumables",
+    "production_consumable_usage",
     "slice_artifacts",
     "production_printer_status",
 }

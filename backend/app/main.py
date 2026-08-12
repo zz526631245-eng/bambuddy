@@ -4309,6 +4309,20 @@ async def on_print_complete(printer_id: int, data: dict):
 
                 async with async_session() as db:
                     await mark_real_job_finished(db, queue_item_id, queue_status)
+                    from backend.app.services.production_consumption import record_usage_for_queue_item
+
+                    usage = await record_usage_for_queue_item(
+                        db,
+                        queue_item_id,
+                        queue_status=queue_status,
+                    )
+                    if usage:
+                        logger.info(
+                            "Recorded %.2fg consumable usage for queue %s (cost %.2f)",
+                            usage["consumed_g"],
+                            queue_item_id,
+                            usage["cost"],
+                        )
             except Exception as exc:
                 logger.warning("Stage 14 production completion mirror failed for queue %s: %s", queue_item_id, exc)
 

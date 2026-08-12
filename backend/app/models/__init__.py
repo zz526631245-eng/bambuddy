@@ -35,6 +35,7 @@ from backend.app.models.product_master import (
 )
 from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
 from backend.app.models.production_consumable_unit import ProductionConsumableUnit
+from backend.app.models.production_consumable_usage import ProductionConsumableUsage
 from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
 from backend.app.models.production_printer_status import ProductionPrinterStatus
 from backend.app.models.production_recipe import ProductionRecipe
@@ -104,6 +105,7 @@ __all__ = [
     "PlateJob",
     "ProductionPrinterConsumable",
     "ProductionConsumableUnit",
+    "ProductionConsumableUsage",
     "ProductionPrinterStatus",
     "SliceArtifact",
     "OperationLog",

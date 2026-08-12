@@ -6,6 +6,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.virtual_printer import VirtualPrinter
+from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.printer import Printer
+from backend.app.models.production_consumable_unit import ProductionConsumableUnit
+from backend.app.models.production_printer_consumable import ProductionPrinterConsumable
+from backend.app.services import production_consumption
 
 
 async def _material_type(client: AsyncClient, suffix: str) -> dict:
@@ -29,13 +34,21 @@ async def test_generate_unique_units_and_receive_is_idempotent(
     material = await _material_type(async_client, "A")
     generated = await async_client.post(
         "/api/v1/production/consumable-library/batches",
-        json={"operation_id": "stage12-library-generate-a", "material_type_id": material["id"], "quantity": 3},
+        json={
+            "operation_id": "stage12-library-generate-a",
+            "material_type_id": material["id"],
+            "quantity": 3,
+            "initial_weight_g": 1000,
+            "unit_price": 80,
+        },
     )
     assert generated.status_code == 201, generated.text
     units = generated.json()["items"]
     assert len(units) == 3
     assert len({unit["unit_code"] for unit in units}) == 3
     assert {unit["status"] for unit in units} == {"generated"}
+    assert {unit["initial_weight_g"] for unit in units} == {1000}
+    assert {unit["unit_price"] for unit in units} == {80}
 
     received = await async_client.post(
         "/api/v1/production/consumable-library/scan",
@@ -78,6 +91,62 @@ async def test_generate_unique_units_and_receive_is_idempotent(
     assert grouped["in_stock"] == 1
     assert grouped["generated"] == 2
     assert grouped["total"] == 3
+
+
+async def test_consumption_is_recorded_once_and_can_be_filtered(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    material = await _material_type(async_client, "C")
+    batch = await async_client.post(
+        "/api/v1/production/consumable-library/batches",
+        json={
+            "operation_id": "stage15-library-generate-c",
+            "material_type_id": material["id"],
+            "quantity": 1,
+            "initial_weight_g": 1000,
+            "unit_price": 80,
+        },
+    )
+    unit = batch.json()["items"][0]
+    unit_row = await db_session.get(ProductionConsumableUnit, unit["id"])
+    unit_row.status = "bound"
+    printer = Printer(name="Stage 15 printer", serial_number="STAGE15-C", ip_address="127.0.0.1", access_code="x")
+    db_session.add(printer)
+    await db_session.flush()
+    queue = PrintQueueItem(printer_id=printer.id, status="completed")
+    db_session.add(queue)
+    await db_session.flush()
+    db_session.add(
+        ProductionPrinterConsumable(
+            printer_id=printer.id,
+            consumable_unit_id=unit_row.id,
+            scan_code=unit_row.unit_code,
+            material="PLA",
+            color_hex="FFFFFF",
+            color_name="白色",
+            operation_id="stage15-library-bind-c",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setattr(production_consumption, "estimate_queue_item_consumption", lambda *_args, **_kwargs: __import__("asyncio").sleep(0, result=125.0))
+
+    first = await production_consumption.record_usage_for_queue_item(db_session, queue.id, queue_status="completed")
+    replay = await production_consumption.record_usage_for_queue_item(db_session, queue.id, queue_status="completed")
+    assert first is not None
+    assert first["consumed_g"] == 125
+    assert first["cost"] == 10
+    assert replay["id"] == first["id"]
+    await db_session.refresh(unit_row)
+    assert unit_row.remaining_weight_g == 875
+
+    summary = await async_client.get("/api/v1/production/consumable-library/consumption-summary?period=1y")
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["consumed_g"] == 125
+    assert summary.json()["cost"] == 10
+    assert summary.json()["event_count"] == 1
 
 
 async def test_bound_unit_depletion_releases_direct_printer_binding(

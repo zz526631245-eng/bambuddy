@@ -184,6 +184,7 @@ async def ensure_production_schema(conn):
         product_master,
         production,
         production_consumable_unit,
+        production_consumable_usage,
         production_printer_consumable,
         production_printer_status,
         production_recipe,
@@ -351,6 +352,41 @@ async def ensure_stage12_columns(conn):
         conn,
         "CREATE INDEX IF NOT EXISTS ix_production_printer_consumables_consumable_unit_id "
         "ON production_printer_consumables (consumable_unit_id)",
+    )
+    await _safe_execute(conn, "ALTER TABLE production_consumable_units ADD COLUMN initial_weight_g FLOAT")
+    await _safe_execute(conn, "ALTER TABLE production_consumable_units ADD COLUMN unit_price FLOAT")
+
+
+async def ensure_stage15_consumable_cost_tracking(conn):
+    """Add per-roll cost facts and idempotent production consumption events."""
+
+    id_type = "SERIAL" if conn.dialect.name == "postgresql" else "INTEGER"
+    timestamp_type = "TIMESTAMP" if conn.dialect.name == "postgresql" else "DATETIME"
+    await _safe_execute(
+        conn,
+        f"""CREATE TABLE IF NOT EXISTS production_consumable_usage (
+            id {id_type} PRIMARY KEY,
+            consumable_unit_id INTEGER REFERENCES production_consumable_units(id) ON DELETE SET NULL,
+            queue_item_id INTEGER REFERENCES print_queue(id) ON DELETE SET NULL,
+            plate_job_id INTEGER REFERENCES plate_jobs(id) ON DELETE SET NULL,
+            printer_id INTEGER REFERENCES printers(id) ON DELETE SET NULL,
+            operation_id VARCHAR(150) NOT NULL UNIQUE,
+            consumed_g FLOAT NOT NULL,
+            cost FLOAT NOT NULL DEFAULT 0,
+            source VARCHAR(30) NOT NULL DEFAULT 'slicer_estimate',
+            recorded_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_consumable_usage_unit_id "
+        "ON production_consumable_usage (consumable_unit_id)",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_consumable_usage_recorded_at "
+        "ON production_consumable_usage (recorded_at)",
     )
 
 
@@ -952,6 +988,7 @@ async def run_migrations(conn):
     await ensure_stage12_columns(conn)
     await ensure_stage13_printer_status(conn)
     await ensure_stage14_production_planning(conn)
+    await ensure_stage15_consumable_cost_tracking(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show

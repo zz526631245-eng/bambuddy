@@ -132,6 +132,9 @@ class ConsumableBatchCreate(BaseModel):
     operation_id: str = Field(min_length=1, max_length=100)
     material_type_id: int
     quantity: int = Field(ge=1, le=1000)
+    initial_weight_g: float | None = Field(default=None, gt=0)
+    unit_price: float | None = Field(default=None, ge=0)
+    # Kept for clients from the earlier inventory-only API.
     remaining_weight_g: float | None = Field(default=None, gt=0)
 
 
@@ -154,6 +157,8 @@ class ConsumableUnitResponse(_FromAttributes):
     unit_code: str
     status: str
     label_batch_id: str
+    initial_weight_g: float | None = None
+    unit_price: float | None = None
     remaining_weight_g: float | None
     storage_location: str | None
     generated_at: datetime
@@ -191,6 +196,47 @@ class ConsumableInventoryGroup(BaseModel):
     depleted: int
     scrapped: int
     total: int
+
+
+class ConsumableConsumptionGroup(BaseModel):
+    brand: str | None
+    material: str
+    subtype: str | None
+    color_name: str | None
+    color_hex: str | None
+    consumed_g: float
+    cost: float
+    event_count: int
+
+
+class ConsumableUsageEventResponse(BaseModel):
+    id: int
+    consumable_unit_id: int | None
+    unit_code: str | None
+    material_type_code: str | None
+    brand: str | None
+    material: str | None
+    subtype: str | None
+    color_name: str | None
+    color_hex: str | None
+    queue_item_id: int | None
+    plate_job_id: int | None
+    printer_id: int | None
+    consumed_g: float
+    cost: float
+    source: str
+    recorded_at: datetime
+
+
+class ConsumableConsumptionSummary(BaseModel):
+    period: str
+    start_date: datetime
+    end_date: datetime
+    consumed_g: float
+    cost: float
+    event_count: int
+    groups: list[ConsumableConsumptionGroup]
+    events: list[ConsumableUsageEventResponse]
 
 
 PRINTER_STATUS_STATES = Literal["unknown", "idle", "printing", "paused", "finished", "offline", "error", "maintenance"]

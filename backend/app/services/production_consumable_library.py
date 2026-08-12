@@ -38,6 +38,8 @@ async def _serialize(unit: ProductionConsumableUnit, db: AsyncSession, *, replay
         "unit_code": unit.unit_code,
         "status": unit.status,
         "label_batch_id": unit.label_batch_id,
+        "initial_weight_g": unit.initial_weight_g,
+        "unit_price": unit.unit_price,
         "remaining_weight_g": unit.remaining_weight_g,
         "storage_location": unit.storage_location,
         "generated_at": unit.generated_at,
@@ -81,6 +83,7 @@ async def create_batch(db: AsyncSession, payload: ConsumableBatchCreate) -> dict
     if material is None:
         raise LookupError("材料类型不存在")
     batch_id = uuid4().hex
+    initial_weight_g = payload.initial_weight_g or payload.remaining_weight_g
     rows = []
     for _index in range(payload.quantity):
         rows.append(
@@ -89,7 +92,9 @@ async def create_batch(db: AsyncSession, payload: ConsumableBatchCreate) -> dict
                 unit_code=f"CU-{material.code}-{uuid4().hex[:12].upper()}",
                 status=CONSUMABLE_GENERATED,
                 label_batch_id=batch_id,
-                remaining_weight_g=payload.remaining_weight_g,
+                initial_weight_g=initial_weight_g,
+                unit_price=payload.unit_price,
+                remaining_weight_g=initial_weight_g,
             )
         )
     db.add_all(rows)

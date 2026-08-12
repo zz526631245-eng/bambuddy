@@ -16,6 +16,7 @@ from backend.app.core.database import (
     ensure_stage8_columns,
     ensure_stage11_columns,
     ensure_stage12_columns,
+    ensure_stage15_consumable_cost_tracking,
 )
 from backend.app.models.production import PRODUCTION_TABLE_NAMES
 
@@ -219,4 +220,23 @@ async def test_sqlite_stage11_to_stage12_consumable_link_preserves_bindings_and_
 
     assert row == ("LEGACY", "PLA", "FFFFFF", None)
     assert "consumable_unit_id" in columns
+    await engine.dispose()
+
+
+async def test_sqlite_stage15_cost_tracking_is_repeatable(tmp_path: Path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stage15-cost.db'}")
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE production_consumable_units (id INTEGER PRIMARY KEY)"))
+        await conn.execute(text("CREATE TABLE print_queue (id INTEGER PRIMARY KEY)"))
+        await conn.execute(text("CREATE TABLE plate_jobs (id INTEGER PRIMARY KEY)"))
+        await conn.execute(text("CREATE TABLE printers (id INTEGER PRIMARY KEY)"))
+        await ensure_stage15_consumable_cost_tracking(conn)
+        await ensure_stage15_consumable_cost_tracking(conn)
+        columns = {
+            column[1]
+            for column in (await conn.execute(text("PRAGMA table_info(production_consumable_usage)"))).all()
+        }
+        tables = await _table_names(conn)
+    assert "production_consumable_usage" in tables
+    assert {"operation_id", "consumed_g", "cost", "recorded_at"} <= columns
     await engine.dispose()

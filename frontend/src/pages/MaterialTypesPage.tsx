@@ -45,6 +45,8 @@ export function MaterialTypesPage() {
   const [form, setForm] = useState(empty);
   const [generateMaterial, setGenerateMaterial] = useState<MaterialType | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [initialWeightG, setInitialWeightG] = useState(1000);
+  const [unitPrice, setUnitPrice] = useState(0);
   const [activeSection, setActiveSection] = useState('/material-types');
   const create = useMutation({
     mutationFn: materialsApi.create,
@@ -57,13 +59,16 @@ export function MaterialTypesPage() {
       queryClient.invalidateQueries({ queryKey: ['consumable-library'] });
       setGenerateMaterial(null);
       setQuantity(1);
+      setInitialWeightG(1000);
+      setUnitPrice(0);
     },
   });
   const submit = (event: FormEvent) => { event.preventDefault(); create.mutate(form); };
   const generate = (event: FormEvent) => {
     event.preventDefault();
     if (!generateMaterial || quantity < 1) return;
-    batch.mutate({ operation_id: operationId('consumable-batch'), material_type_id: generateMaterial.id, quantity });
+    if (initialWeightG <= 0 || unitPrice < 0) return;
+    batch.mutate({ operation_id: operationId('consumable-batch'), material_type_id: generateMaterial.id, quantity, initial_weight_g: initialWeightG, unit_price: unitPrice });
   };
   const selectSection = (to: string) => setActiveSection(to);
 
@@ -106,6 +111,6 @@ export function MaterialTypesPage() {
     })}</div>
 
     </>}
-    {generateMaterial && <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><Card className="w-full max-w-md"><CardContent><h2 className="text-xl font-semibold text-white">生成耗材卷二维码</h2><p className="text-bambu-gray mt-2">{generateMaterial.brand || '未指定品牌'} · {generateMaterial.material} · {generateMaterial.color_name || generateMaterial.color_hex}</p><form onSubmit={generate} className="mt-5 space-y-4"><label className="block text-sm text-bambu-gray">需要生成的卷数<input aria-label="生成数量" type="number" min="1" max="1000" value={quantity} onChange={event => setQuantity(Number(event.target.value))} className={'mt-1 w-full ' + inputClass} /></label>{batch.error && <p className="text-red-400 text-sm">{String(batch.error)}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setGenerateMaterial(null)}>取消</Button><Button type="submit" disabled={batch.isPending || quantity < 1}>生成二维码</Button></div></form></CardContent></Card></div>}
+    {generateMaterial && <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><Card className="w-full max-w-md"><CardContent><h2 className="text-xl font-semibold text-white">生成耗材卷二维码</h2><p className="text-bambu-gray mt-2">{generateMaterial.brand || '未指定品牌'} · {generateMaterial.material} · {generateMaterial.color_name || generateMaterial.color_hex}</p><form onSubmit={generate} className="mt-5 space-y-4"><label className="block text-sm text-bambu-gray">需要生成的卷数<input aria-label="生成数量" type="number" min="1" max="1000" value={quantity} onChange={event => setQuantity(Number(event.target.value))} className={'mt-1 w-full ' + inputClass} /></label><label className="block text-sm text-bambu-gray">每卷净重（g）<input aria-label="每卷净重" required type="number" min="0.01" step="0.01" value={initialWeightG} onChange={event => setInitialWeightG(Number(event.target.value))} className={'mt-1 w-full ' + inputClass} /></label><label className="block text-sm text-bambu-gray">每卷价格（元）<input aria-label="每卷价格" required type="number" min="0" step="0.01" value={unitPrice} onChange={event => setUnitPrice(Number(event.target.value))} className={'mt-1 w-full ' + inputClass} /></label><p className="text-xs text-bambu-gray">生成后每卷都会保存克重和价格；打印完成时按切片耗材克数自动扣减并计算成本。</p>{batch.error && <p className="text-red-400 text-sm">{String(batch.error)}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setGenerateMaterial(null)}>取消</Button><Button type="submit" disabled={batch.isPending || quantity < 1 || initialWeightG <= 0 || unitPrice < 0}>生成二维码</Button></div></form></CardContent></Card></div>}
   </div>;
 }
