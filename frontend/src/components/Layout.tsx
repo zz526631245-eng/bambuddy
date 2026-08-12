@@ -64,25 +64,6 @@ export const defaultNavItems: NavItem[] = [
   { id: 'settings', to: '/settings', icon: Settings, labelKey: 'nav.settings' },
 ];
 
-// Keep the primary sidebar focused on the six daily entry points. The routes
-// remain available through grouped page navigation (or by direct URL), so
-// this is a presentation change rather than a feature removal.
-const lowFrequencyNavItemIds = new Set([
-  'inventory',
-  'queue',
-  'projects',
-  'slice-library',
-  'printer-consumables',
-  'consumable-library',
-  'production-printer-status',
-  'printer-profiles',
-  'files',
-  'makerworld',
-  'profiles',
-  'maintenance',
-  'stats',
-]);
-
 // Get default view from localStorage
 export function getDefaultView(): string {
   return localStorage.getItem('defaultView') || '/';
@@ -343,7 +324,6 @@ export function Layout() {
     };
 
     const isHidden = (id: string) => {
-      if (lowFrequencyNavItemIds.has(id)) return true;
       // User-toggled hide (#1673) wins first — cheapest check, explicit intent.
       if (hiddenSystemItemIds.includes(id)) return true;
       // Permission gate accepts Permission | Permission[] so resources with
