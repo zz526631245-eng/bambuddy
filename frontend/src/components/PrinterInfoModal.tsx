@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Copy, Check, Signal, Cable } from 'lucide-react';
+import { X, Copy, Check, Signal, Cable, Download, QrCode } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Card, CardContent } from './Card';
 import { formatDateOnly } from '../utils/date';
 import { getPrinterImage, getWifiStrength } from '../utils/printer';
+import { mobileBaseUrl, isLoopbackPage } from '../utils/mobileUrl';
+import { buildPrinterConsumableQrPayload } from '../utils/printerConsumableQr';
 import type { Printer, PrinterStatus } from '../api/client';
 
 interface PrinterInfoModalProps {
@@ -62,6 +65,19 @@ function CopyButton({ value }: { value: string }) {
 
 export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: PrinterInfoModalProps) {
   const { t } = useTranslation();
+  const qrId = `printer-consumable-qr-${printer.id}`;
+  const printerQrPayload = buildPrinterConsumableQrPayload(mobileBaseUrl(), `printer:${printer.id}`);
+
+  const downloadPrinterQr = () => {
+    const svg = document.getElementById(qrId);
+    if (!(svg instanceof SVGElement)) return;
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `printer-${printer.id}-consumable-qr.svg`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -254,6 +270,28 @@ export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: 
                 <span className="text-sm text-white text-right">{row.value}</span>
               </div>
             ))}
+          </div>
+
+          <div className="mt-5 rounded-xl border border-bambu-green/30 bg-bambu-green/5 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-white">
+              <QrCode className="w-4 h-4 text-bambu-green" />
+              手机换料扫码二维码
+            </div>
+            <p className="mt-1 text-xs text-bambu-gray">在手机 App 的“打印机换料”中先扫描此二维码，再扫描耗材二维码。</p>
+            <div className="mt-3 flex justify-center rounded-lg bg-white p-3">
+              <QRCodeSVG id={qrId} value={printerQrPayload} size={190} includeMargin />
+            </div>
+            {isLoopbackPage() && (
+              <p className="mt-2 text-xs text-amber-300">当前页面使用本机地址，手机无法直接访问。请用手机可访问的局域网 HTTPS 地址打开系统后再生成/使用此二维码。</p>
+            )}
+            <button
+              type="button"
+              onClick={downloadPrinterQr}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-white hover:bg-bambu-dark-tertiary"
+            >
+              <Download className="w-4 h-4" />
+              下载打印机二维码
+            </button>
           </div>
         </CardContent>
       </Card>

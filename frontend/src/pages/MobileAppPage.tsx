@@ -134,6 +134,7 @@ export function MobileAppPage() {
   const [scannerOpen, setScannerOpen] = React.useState(false);
   const [scanCode, setScanCode] = React.useState('');
   const [printer, setPrinter] = React.useState<PrinterConsumableTarget | null>(null);
+  const [pendingPrinterKey, setPendingPrinterKey] = React.useState<string | null>(null);
   const [material, setMaterial] = React.useState('');
   const [colorHex, setColorHex] = React.useState('');
   const [colorName, setColorName] = React.useState('');
@@ -143,14 +144,29 @@ export function MobileAppPage() {
   const jobs = useQuery({ queryKey: ['mobile-plate-jobs'], queryFn: productionApi.listPlateJobs, enabled: action === 'quality' || action === 'cleanup' });
   const unitMutation = useMutation({ mutationFn: (input: { unit_code: string; action: 'receive' | 'deplete' | 'scrap' }) => productionApi.scanConsumableUnit({ operation_id: `mobile-${input.action}-${Date.now()}`, ...input }), onSuccess: result => { setMessage(`${result.unit_code} 已${result.status === 'in_stock' ? '入库' : result.status === 'depleted' ? '标记用完' : '标记报废'}。`); queryClient.invalidateQueries({ queryKey: ['mobile-consumable-units'] }); setScanCode(''); } });
   const bindingMutation = useMutation({ mutationFn: () => productionApi.scanConsumable({ operation_id: `mobile-bind-${Date.now()}`, scan_code: scanCode, material: material || null, color_hex: colorHex || null, color_name: colorName || null, ...(printer?.kind === 'printer' ? { printer_id: printer.id } : { virtual_printer_id: printer!.id }) }), onSuccess: () => { setMessage('耗材已绑定到打印机，旧耗材已自动替换。'); queryClient.invalidateQueries({ queryKey: ['mobile-consumable-targets'] }); setScanCode(''); } });
-  const reset = () => { setAction(null); setScannerOpen(false); setScanCode(''); setPrinter(null); setMaterial(''); setColorHex(''); setColorName(''); setMessage(''); };
+  const reset = () => { setAction(null); setScannerOpen(false); setScanCode(''); setPrinter(null); setPendingPrinterKey(null); setMaterial(''); setColorHex(''); setColorName(''); setMessage(''); };
+  React.useEffect(() => {
+    if (action !== 'change' || printer || !pendingPrinterKey || !targets.data) return;
+    const found = targets.data.find(item => `${item.kind}:${item.id}` === pendingPrinterKey) || null;
+    setPendingPrinterKey(null);
+    setPrinter(found);
+    setMessage(found ? `已锁定打印机：${found.name}，请继续扫描耗材卷。` : '服务器当前未找到该打印机，请确认 App 已连接新台式机并重新生成二维码。');
+  }, [action, pendingPrinterKey, printer, targets.data]);
   const handleDecoded = React.useCallback((raw: string) => {
     const parsed = parseQr(raw);
     setScannerOpen(false);
     if (action === 'change' && !printer) {
       if (!parsed.targetKey) { setMessage('这不是打印机二维码，请先扫描打印机上的二维码。'); return; }
       const found = targets.data?.find(item => `${item.kind}:${item.id}` === parsed.targetKey) || null;
-      setPrinter(found); setMessage(found ? `已锁定打印机：${found.name}，请继续扫描耗材卷。` : '打印机二维码已读取，但服务器找不到该设备。');
+      if (found) {
+        setPrinter(found);
+        setMessage(`已锁定打印机：${found.name}，请继续扫描耗材卷。`);
+      } else if (!targets.data) {
+        setPendingPrinterKey(parsed.targetKey);
+        setMessage('已读取打印机二维码，正在从服务器刷新设备列表…');
+      } else {
+        setMessage('服务器当前未找到该打印机，请确认 App 已连接新台式机并重新生成二维码。');
+      }
       return;
     }
     setScanCode(parsed.code); if (parsed.material) setMaterial(parsed.material); if (parsed.colorHex) setColorHex(parsed.colorHex.startsWith('#') ? parsed.colorHex : `#${parsed.colorHex}`); if (parsed.colorName) setColorName(parsed.colorName); setMessage('二维码识别成功，请检查信息后提交。');
