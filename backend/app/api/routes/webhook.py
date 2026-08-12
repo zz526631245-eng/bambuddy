@@ -82,6 +82,11 @@ async def webhook_add_to_queue(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
+    if printer.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(printer.id):
+        raise HTTPException(
+            status_code=409,
+            detail="打印机上一盘尚未确认清理料盘，不能接收新的打印任务",
+        )
 
     # Get next position
     result = await db.execute(

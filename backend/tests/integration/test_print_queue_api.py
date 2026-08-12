@@ -149,6 +149,23 @@ class TestPrintQueueAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_add_to_queue_rejects_printer_waiting_for_plate_clear(
+        self, async_client: AsyncClient, printer_factory, archive_factory
+    ):
+        """A printer awaiting physical cleanup cannot receive another queue item."""
+        printer = await printer_factory(awaiting_plate_clear=True)
+        archive = await archive_factory()
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            json={"printer_id": printer.id, "archive_id": archive.id},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "plate_clear_required"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_add_to_queue_with_skip_filament_check(
         self, async_client: AsyncClient, printer_factory, archive_factory, db_session
     ):

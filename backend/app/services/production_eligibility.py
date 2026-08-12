@@ -23,6 +23,7 @@ from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product_file import ProductFile
 from backend.app.models.production import PlateJob, PlateJobStatus
 from backend.app.models.virtual_printer import VirtualPrinter
+from backend.app.services.printer_manager import printer_manager
 from backend.app.services.production_printer_capabilities import (
     capabilities_from_rows,
     match_filament_requirements,
@@ -256,6 +257,12 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
             if candidate_printers:
                 real_target_seen = True
         for candidate_printer in candidate_printers:
+            # A finished/failed printer remains reserved until the operator
+            # confirms the physical plate was cleared. Check both the
+            # persisted flag and the in-memory manager flag so allocation
+            # cannot win a race with the completion callback's async DB write.
+            if candidate_printer.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(candidate_printer.id):
+                continue
             if not await availability(db, "printer", candidate_printer.id):
                 continue
             capability_result = match_filament_requirements(

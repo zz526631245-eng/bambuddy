@@ -2407,6 +2407,11 @@ async def run_migrations(conn):
     # Migration: Add awaiting_plate_clear column to printers (#961)
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN awaiting_plate_clear BOOLEAN DEFAULT FALSE NOT NULL")
 
+    # Migration: Plate-clear confirmation is now mandatory for production.
+    # Older installs may have explicitly stored ``false``; normalize that row
+    # so the settings/API/UI all agree with the scheduler safety interlock.
+    await conn.execute(text("UPDATE settings SET value = 'true' WHERE key = 'require_plate_clear'"))
+
     # Migration: Add REST/Webhook smart plug fields
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_url VARCHAR(500)")
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_body TEXT")

@@ -214,6 +214,15 @@ async def update_settings(
     """Update application settings."""
     update_data = settings_update.model_dump(exclude_unset=True)
 
+    # Plate-clear confirmation is a production safety interlock.  Keep the
+    # field in the API for backwards compatibility, but never allow a client
+    # to turn it off and accidentally dispatch onto an uncleared printer.
+    if update_data.get("require_plate_clear") is False:
+        raise HTTPException(
+            status_code=400,
+            detail="Plate-clear confirmation is mandatory and cannot be disabled.",
+        )
+
     # Safety refusals on disabling local login (#1589). Two failure modes
     # would otherwise lock everyone out of the install:
     #   1. No enabled OIDC provider exists — nobody could authenticate.

@@ -251,19 +251,19 @@ class TestSchedulerIdleCheckWithPlateCleared:
         assert scheduler._is_printer_idle(1) is False
 
     @patch("backend.app.services.print_scheduler.printer_manager")
-    def test_finish_state_idle_when_require_plate_clear_disabled(self, mock_pm, scheduler):
+    def test_finish_state_still_blocked_when_legacy_setting_disabled(self, mock_pm, scheduler):
         """FINISH is idle when require_plate_clear=False, regardless of awaiting flag."""
         mock_pm.is_connected.return_value = True
         mock_pm.get_status.return_value = MagicMock(state="FINISH")
         mock_pm.is_awaiting_plate_clear.return_value = True
-        assert scheduler._is_printer_idle(1, require_plate_clear=False) is True
+        assert scheduler._is_printer_idle(1, require_plate_clear=False) is False
 
     @patch("backend.app.services.print_scheduler.printer_manager")
-    def test_failed_state_idle_when_require_plate_clear_disabled(self, mock_pm, scheduler):
+    def test_failed_state_still_blocked_when_legacy_setting_disabled(self, mock_pm, scheduler):
         mock_pm.is_connected.return_value = True
         mock_pm.get_status.return_value = MagicMock(state="FAILED")
         mock_pm.is_awaiting_plate_clear.return_value = True
-        assert scheduler._is_printer_idle(1, require_plate_clear=False) is True
+        assert scheduler._is_printer_idle(1, require_plate_clear=False) is False
 
     @patch("backend.app.services.print_scheduler.printer_manager")
     def test_running_state_not_idle_even_when_require_plate_clear_disabled(self, mock_pm, scheduler):
@@ -280,7 +280,7 @@ class TestSchedulerIdleCheckWithPlateCleared:
         assert scheduler._is_printer_idle(1, require_plate_clear=False) is True
 
 
-class TestPlateGateDefaultsOffWhenUnset:
+class TestPlateGateDefaultsOnWhenUnset:
     """#1865: with no require_plate_clear row in the settings table, the plate-clear
     gate must default OFF — matching SettingsSchema.require_plate_clear (default False)
     and the frontend (toggle + card badge both treat a missing value as off). The
@@ -294,7 +294,7 @@ class TestPlateGateDefaultsOffWhenUnset:
         return PrintScheduler()
 
     @pytest.mark.asyncio
-    async def test_get_bool_setting_honors_false_default_when_row_absent(self, scheduler):
+    async def test_get_bool_setting_honors_true_default_when_row_absent(self, scheduler):
         """_get_bool_setting must return the caller's default when the key has no row."""
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -307,18 +307,18 @@ class TestPlateGateDefaultsOffWhenUnset:
         session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with session_maker() as db:
             # No Settings row seeded → the caller's default decides the value.
-            assert await scheduler._get_bool_setting(db, "require_plate_clear", default=False) is False
+            assert await scheduler._get_bool_setting(db, "require_plate_clear", default=True) is True
         await engine.dispose()
 
     @pytest.mark.asyncio
     @patch("backend.app.services.print_scheduler.printer_manager")
-    async def test_check_queue_reads_plate_clear_setting_with_default_false(self, mock_pm, scheduler):
+    async def test_check_queue_reads_plate_clear_setting_with_default_true(self, mock_pm, scheduler):
         """The per-check read of require_plate_clear must pass default=False (#1865).
 
         Guards the exact regression: a True default here re-enabled the gate the
         schema/UI treat as off when no settings row exists.
         """
-        scheduler._get_bool_setting = AsyncMock(return_value=False)
+        scheduler._get_bool_setting = AsyncMock(return_value=True)
         scheduler._check_auto_drying = AsyncMock()
 
         mock_result = MagicMock()
@@ -337,8 +337,8 @@ class TestPlateGateDefaultsOffWhenUnset:
             if len(c.args) >= 2 and c.args[1] == "require_plate_clear"
         ]
         assert plate_calls, "check_queue did not read the require_plate_clear setting"
-        assert plate_calls[0].kwargs.get("default") is False, (
-            "require_plate_clear must be read with default=False to match the schema/UI (#1865)"
+        assert plate_calls[0].kwargs.get("default") is True, (
+            "require_plate_clear must be read with default=True for the mandatory safety gate"
         )
 
 
@@ -371,7 +371,7 @@ class TestPlateGateEndToEnd:
                 db.add(Settings(key="require_plate_clear", value=row_value))
                 await db.commit()
             # Mirror the exact call site in check_queue (print_scheduler.py).
-            value = await scheduler._get_bool_setting(db, "require_plate_clear", default=False)
+            value = await scheduler._get_bool_setting(db, "require_plate_clear", default=True)
         await engine.dispose()
         return value
 
@@ -379,8 +379,8 @@ class TestPlateGateEndToEnd:
     @pytest.mark.parametrize(
         "row_value, expected_gate",
         [
-            (None, False),  # fresh install / never saved -> #1865 case -> gate OFF
-            ("false", False),  # explicitly disabled -> gate OFF
+            (None, True),  # fresh install / never saved -> safety default ON
+            ("false", False),  # legacy row is parsed, but cannot disable the gate
             ("true", True),  # explicitly enabled -> gate ON
             ("True", True),  # case-insensitive parse
         ],
@@ -389,8 +389,7 @@ class TestPlateGateEndToEnd:
     async def test_finish_awaiting_dispatch_eligibility_matches_setting(
         self, mock_pm, scheduler, row_value, expected_gate
     ):
-        """A FINISH printer with the awaiting flag raised is dispatch-eligible IFF the
-        gate is off. Reads the setting from a real DB, then feeds it to the real gate."""
+        """A FINISH printer with the awaiting flag raised is never dispatch-eligible."""
         require_plate_clear = await self._read_setting(scheduler, row_value)
         assert require_plate_clear is expected_gate
 
@@ -399,8 +398,8 @@ class TestPlateGateEndToEnd:
         mock_pm.is_awaiting_plate_clear.return_value = True  # bed potentially fouled
 
         is_idle = scheduler._is_printer_idle(1, require_plate_clear)
-        # Gate OFF -> idle (dispatches). Gate ON -> not idle (waits for ack).
-        assert is_idle is (not expected_gate)
+        # The mandatory safety gate always blocks until plate-clear confirmation.
+        assert is_idle is False
 
     @pytest.mark.asyncio
     @patch("backend.app.services.print_scheduler.printer_manager")

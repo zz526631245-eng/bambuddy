@@ -151,3 +151,11 @@ npm.cmd run lint
 - 产品资料分组移除“项目”入口；Projects 路由及数据保留。
 - 新增 HubNav 交互回归，验证带 `onSelect` 时阻止路由跳转并返回目标分组。
 - 验证：`npm.cmd run build`、`npm.cmd run lint`、Layout/生产订单/设置定向测试 `78 passed`，HubNav 测试通过。
+
+## 清理料盘强制互锁补充（2026-08-12）
+
+- 分支：`codex/plate-clear-enforcement`。
+- 打印完成或失败后，未点击“确认清理料盘”时，调度器、自动分配、真实切片派发和指定打印机队列入口均拒绝新任务；清理确认后才恢复可用。
+- `require_plate_clear` 已改为强制开启。启动迁移会把旧的 `false` 设置改为 `true`，设置 API 也不允许关闭该安全规则。
+- 回归测试：调度器清板测试 `32 passed`；Stage 14 真实派发测试 `9 passed`；普通打印队列测试 `88 passed`；设置接口测试 `5 passed`。
+- 前端设置页将清板规则显示为始终开启且不可关闭，避免操作员误以为可以绕过确认。

@@ -235,14 +235,13 @@ class PrintScheduler:
                 )
             items = list(result.scalars().all())
 
-            # Read plate-clear setting once per queue check. Default MUST be
-            # False to match the schema (SettingsSchema.require_plate_clear
-            # defaults False) and the frontend (toggle + card badge both treat a
-            # missing value as off). When no settings row exists, a True default
-            # here re-enabled the plate-clear gate the UI showed as disabled,
-            # blocking dispatch to FINISH-state printers forever with no UI path
-            # to clear it (#1865).
-            require_plate_clear = await self._get_bool_setting(db, "require_plate_clear", default=False)
+            # Plate-clear confirmation is a mandatory safety gate. Keep reading
+            # the legacy setting for compatibility/diagnostics, but never let a
+            # missing or old ``false`` row disable the interlock.
+            configured_plate_clear = await self._get_bool_setting(db, "require_plate_clear", default=True)
+            require_plate_clear = True
+            if not configured_plate_clear:
+                logger.warning("Plate-clear confirmation is mandatory; ignoring legacy require_plate_clear=false")
 
             if not items:
                 # No pending items — still check auto-drying on idle printers
@@ -1545,10 +1544,10 @@ class PrintScheduler:
 
         # Plate-clear gate: if the printer finished/failed a previous print and the user
         # hasn't acknowledged the plate was cleared, the queue must not dispatch the next
-        # job — even if the printer currently reports IDLE. After Auto Off cycles the
-        # printer, it boots back into IDLE with no memory of the previous finish; without
-        # the persisted awaiting flag we'd bypass the confirmation prompt (#961).
-        if require_plate_clear and printer_manager.is_awaiting_plate_clear(printer_id):
+        # job — even if the printer currently reports IDLE. This is intentionally
+        # unconditional: accepting a legacy/false setting would allow a new job to
+        # start before the operator has physically removed the finished plate.
+        if printer_manager.is_awaiting_plate_clear(printer_id):
             logger.debug(
                 "Printer %d: not idle — awaiting plate-clear acknowledgment (state=%s)",
                 printer_id,

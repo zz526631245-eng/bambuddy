@@ -68,6 +68,17 @@ class TestUiPreferencesEndpoint:
         assert "require_plate_clear" in data
         # Type must be bool (frontend does === true checks)
         assert isinstance(data["require_plate_clear"], bool)
+        assert data["require_plate_clear"] is True
+
+    @pytest.mark.asyncio
+    async def test_plate_clear_setting_cannot_be_disabled(self, async_client: AsyncClient):
+        """The production safety interlock cannot be switched off via API."""
+        response = await async_client.patch(
+            "/api/v1/settings/",
+            json={"require_plate_clear": False},
+        )
+        assert response.status_code == 400
+        assert "mandatory" in response.text.lower()
 
     @pytest.mark.asyncio
     async def test_returns_expected_field_set(self, async_client: AsyncClient):

@@ -113,6 +113,62 @@ async def test_real_assignment_uses_scanned_direct_feed_over_stale_virtual_profi
     assert assignment.virtual_printer is None
 
 
+async def test_real_assignment_skips_printer_waiting_for_plate_clear(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Automatic allocation must not bind a new plate before cleanup."""
+
+    from backend.app.services.production_eligibility import find_assignment
+
+    printer, _artifact, job, held_queue = await _real_slice_fixture(db_session, tmp_path)
+    printer.loaded_filaments = [{"slot": 254, "material": "PETG", "color": "#FFFFFF"}]
+    printer.awaiting_plate_clear = True
+    held_queue.status = "cancelled"
+    job.queue_item_id = None
+    job.status = "draft"
+    profile = PrinterProfile(
+        code="WAITING-CLEAR-A1",
+        name="Waiting clear A1",
+        printer_model="A1",
+        nozzle_diameter=0.4,
+        auto_production_enabled=True,
+    )
+    db_session.add(profile)
+    await db_session.flush()
+    requirement = await db_session.get(ProductionRequirement, job.requirement_id)
+    assert requirement is not None
+    job.printer_profile_id = profile.id
+    requirement.recipe_snapshot = {
+        "printer_profile_id": profile.id,
+        "library_file_id": 1,
+        "product_file_snapshot": {
+            "compatible_printer_models": [],
+            "filament_requirements": [{"slot": 0, "material": "PETG", "color": "白色"}],
+        },
+    }
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "backend.app.services.production_printer_status.printer_manager.get_status",
+        lambda _printer_id: SimpleNamespace(
+            connected=True,
+            state="IDLE",
+            progress=0,
+            remaining_time=0,
+            layer_num=0,
+            total_layers=0,
+            gcode_file="",
+            subtask_name="",
+        ),
+    )
+
+    assignment = await find_assignment(db_session, job)
+
+    assert assignment is None
+
+
 async def test_confirmed_real_job_runs_real_slice_instead_of_virtual_slice(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -293,6 +349,43 @@ async def test_real_dispatch_requires_confirmation_and_replaces_stage9_hold(
     assert replay.status_code == 200, replay.text
     assert replay.json()["replayed"] is True
     assert replay.json()["queue_item_id"] == new_queue.id
+
+
+async def test_real_dispatch_rejects_printer_waiting_for_plate_clear(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A completed printer cannot accept a new real dispatch before cleanup."""
+
+    printer, artifact, _job, old_queue = await _real_slice_fixture(db_session, tmp_path)
+    printer.awaiting_plate_clear = True
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "backend.app.services.production_real_dispatch.printer_manager.is_connected",
+        lambda printer_id: printer_id == printer.id,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.production_real_dispatch.printer_manager.is_awaiting_plate_clear",
+        lambda printer_id: printer_id == printer.id,
+    )
+
+    async def available(_db, target_type, target_id):
+        return target_type == "printer" and target_id == printer.id
+
+    monkeypatch.setattr("backend.app.services.production_real_dispatch.availability", available)
+
+    rejected = await async_client.post(
+        f"/api/v1/production/slice-artifacts/{artifact.id}/dispatch",
+        json={"operation_id": "stage14-awaiting-clear", "printer_id": printer.id, "confirm": True},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert "plate" in rejected.text.lower() or "清理" in rejected.text
+
+    await db_session.refresh(old_queue)
+    assert old_queue.status == "pending"
 
 
 async def test_auto_dispatch_replaces_held_queue_after_real_slice(

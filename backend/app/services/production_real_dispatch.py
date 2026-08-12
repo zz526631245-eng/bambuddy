@@ -207,6 +207,8 @@ async def dispatch_real_slice_artifact(
     printer = await db.get(Printer, payload.printer_id)
     if printer is None or not printer.is_active:
         raise LookupError("真实打印机不存在或已停用")
+    if printer.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(printer.id):
+        raise ValueError("打印机上一盘尚未确认清理料盘，不能接收新的打印任务")
     if not printer_manager.is_connected(printer.id):
         raise ValueError("真实打印机当前未连接，无法进入第14阶段受控发送")
     if not await availability(db, "printer", printer.id):

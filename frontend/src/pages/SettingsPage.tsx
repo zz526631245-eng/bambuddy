@@ -4238,17 +4238,18 @@ export function SettingsPage() {
                     {t('settings.requirePlateClear', 'Require plate-clear confirmation')}
                   </p>
                   <p className="text-xs text-bambu-gray mt-1">
-                    {t('settings.requirePlateClearDescription', 'When enabled, the scheduler waits for per-printer plate-clear confirmation before starting queued prints on printers with finished jobs. Disabling this also hides the plate status badge and the "Mark plate as cleared" button on printer cards.')}
+                    {t('settings.requirePlateClearMandatory', 'Plate-clear confirmation is mandatory: no new task is accepted or started until the previous plate is confirmed cleared.')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={localSettings.require_plate_clear ?? false}
-                    onChange={(e) => updateSetting('require_plate_clear', e.target.checked)}
+                    checked
+                    disabled
+                    readOnly
                     className="sr-only peer"
                   />
-                  <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
+                  <div className="w-11 h-6 bg-bambu-green/60 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green opacity-70 cursor-not-allowed"></div>
                 </label>
               </div>
             </CardContent>

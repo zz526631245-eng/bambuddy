@@ -414,6 +414,13 @@ async def _pick_assignments(
     target_kind = pipeline.target_kind or "specific_printer"
     if target_kind == "specific_printer" or pipeline.target_printer_id is not None:
         assert pipeline.target_printer_id is not None
+        target = await db.get(Printer, pipeline.target_printer_id)
+        from backend.app.services.printer_manager import printer_manager
+
+        if target is not None and (
+            target.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(target.id)
+        ):
+            raise ValueError("打印机上一盘尚未确认清理料盘，不能接收新的打印任务")
         return [(pipeline.target_printer_id, None)] * copies
 
     # Class-targeting. Enumerate matching printers + apply the strategy.
@@ -429,6 +436,13 @@ async def _pick_assignments(
         .scalars()
         .all()
     )
+    from backend.app.services.printer_manager import printer_manager
+
+    matching = [
+        printer
+        for printer in matching
+        if not printer.awaiting_plate_clear and not printer_manager.is_awaiting_plate_clear(printer.id)
+    ]
     if not matching:
         # Shouldn't reach here when eligibility passes, but failing gracefully
         # is better than a TypeError on next-slot pick.

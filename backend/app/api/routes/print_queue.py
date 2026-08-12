@@ -37,6 +37,7 @@ from backend.app.schemas.print_queue import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
+from backend.app.services.printer_manager import printer_manager
 from backend.app.utils.printer_models import normalize_printer_model, normalize_printer_model_id
 from backend.app.utils.threemf_tools import (
     extract_bed_type_from_3mf,
@@ -399,8 +400,18 @@ async def add_to_queue(
     # Validate printer exists (if assigned)
     if data.printer_id is not None:
         result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
-        if not result.scalar_one_or_none():
+        printer = result.scalar_one_or_none()
+        if not printer:
             raise HTTPException(400, "Printer not found")
+        if printer.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(printer.id):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "plate_clear_required",
+                    "message": "打印机上一盘尚未确认清理料盘，不能接收新的打印任务",
+                    "printer_id": printer.id,
+                },
+            )
 
     # Validate target_model has active printers
     if target_model_norm:

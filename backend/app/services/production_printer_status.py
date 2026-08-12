@@ -239,6 +239,12 @@ async def availability(db: AsyncSession, target_type: str, target_id: int) -> bo
         # because the status page has not been opened in the last 30 seconds.
         printer = await db.get(Printer, target_id)
         if printer is not None:
+            # A printer with a finished plate is reserved until the operator
+            # confirms physical cleanup. This check is kept at the shared
+            # availability boundary as a second line of defence for any
+            # allocator/dispatch caller.
+            if printer.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(printer.id):
+                return False
             if await _sync_real_printer_status(db, printer):
                 await db.flush()
     row = await db.scalar(
