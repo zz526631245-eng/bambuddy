@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Local Bambuddy installations often use a self-signed HTTPS certificate
+         and may be tested over HTTP on an isolated LAN. The app still asks the
+         operator for the server URL explicitly; no remote data is embedded. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

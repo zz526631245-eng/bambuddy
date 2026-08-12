@@ -5,7 +5,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { setAuthToken, getAuthToken, api, setStreamToken } from '../../api/client';
+import { setAuthToken, getAuthToken, api, setStreamToken, normalizeServerUrl } from '../../api/client';
 
 // Mock sessionStorage (H-5: tokens are stored in sessionStorage, not localStorage)
 const sessionStorageMock = {
@@ -105,6 +105,13 @@ describe('Auth Token Management', () => {
     expect(() => setAuthToken(null)).not.toThrow();
     expect(vi.mocked(localStorage.removeItem)).toHaveBeenCalledWith('auth_token');
     expect(getAuthToken()).toBeNull();
+  });
+});
+
+describe('Mobile server URL', () => {
+  it('normalizes trailing slashes and an accidentally pasted API suffix', () => {
+    expect(normalizeServerUrl(' https://192.168.1.20:8019/api/v1/// ')).toBe('https://192.168.1.20:8019');
+    expect(normalizeServerUrl('')).toBe('');
   });
 });
 

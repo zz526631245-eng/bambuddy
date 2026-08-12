@@ -1,4 +1,4 @@
-import { getAuthToken, request } from './client';
+import { getApiBase, getAuthToken, request } from './client';
 
 export interface QuantityLedger {
   planned:number; reserved:number; good:number; scrap:number; remaining:number;
@@ -152,6 +152,7 @@ export const productionApi={
   realSlice:(plateJobId:number,data?:{target_printer_preset?:string;target_printer_model?:string})=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/real-slice`,{method:'POST',body:JSON.stringify(data ?? {})}),
   reviewSliceTime:(plateJobId:number,approve:boolean)=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/slice-time-review`,{method:'POST',body:JSON.stringify({operation_id:operationId('slice-time-review'),approve})}),
   listSliceArtifacts:()=>request<SliceArtifact[]>('/production/slice-artifacts'),
+  listPlateJobs:()=>request<PlateJob[]>('/production/plate-jobs'),
   dispatchSliceArtifact:(artifactId:number,data:{printer_id:number;plate_job_id?:number})=>
     request<RealPrinterDispatch>(`/production/slice-artifacts/${artifactId}/dispatch`,{method:'POST',body:JSON.stringify({operation_id:operationId('stage14-dispatch'),confirm:true,...data})}),
   listConsumables:()=>request<PrinterConsumable[]>('/production/printer-consumables'),
@@ -175,7 +176,7 @@ export const productionApi={
   downloadConsumableBatchPdf:async (batchId:string):Promise<void> => {
     const headers:Record<string,string> = {};
     const token = getAuthToken(); if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`/api/v1/production/consumable-library/batches/${encodeURIComponent(batchId)}/pdf`, { headers });
+    const response = await fetch(`${getApiBase()}/production/consumable-library/batches/${encodeURIComponent(batchId)}/pdf`, { headers });
     if (!response.ok) throw new Error(`二维码 PDF 下载失败（${response.status}）`);
     const blob = await response.blob();
     const disposition = response.headers.get('content-disposition') || '';
@@ -184,7 +185,7 @@ export const productionApi={
     const url = window.URL.createObjectURL(blob); const anchor = document.createElement('a');
     anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.URL.revokeObjectURL(url);
   },
-  scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:'receive'|'deplete'|'scrap';remaining_weight_g?:number;storage_location?:string|null})=>
+  scanConsumableUnit:(data:{operation_id:string;unit_code:string;action:string;remaining_weight_g?:number;storage_location?:string|null})=>
     request<ConsumableUnit>('/production/consumable-library/scan',{method:'POST',body:JSON.stringify(data)}),
   listPrinterStatuses:()=>request<ProductionPrinterStatus[]>('/production/printer-status'),
   heartbeatPrinter:(data:{operation_id:string;target_type:'printer'|'virtual_printer';target_id:number;state:ProductionPrinterState;source?:'stage13_simulation'|'adapter';current_job_id?:number|null;current_job_state?:string|null;fault_code?:string|null;fault_message?:string|null;loaded_filaments?:Array<Record<string,unknown>>;telemetry?:Record<string,unknown>})=>
@@ -192,7 +193,7 @@ export const productionApi={
   downloadSliceArtifact: async (artifactId:number):Promise<void> => {
     const headers:Record<string,string> = {};
     const token = getAuthToken(); if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`/api/v1/production/slice-artifacts/${artifactId}/download`, { headers });
+    const response = await fetch(`${getApiBase()}/production/slice-artifacts/${artifactId}/download`, { headers });
     if (!response.ok) throw new Error(`下载切片文件失败（${response.status}）`);
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob); const anchor = document.createElement('a');

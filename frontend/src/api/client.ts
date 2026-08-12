@@ -1,6 +1,52 @@
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../types/plates';
 
-const API_BASE = '/api/v1';
+const DEFAULT_API_BASE = '/api/v1';
+const MOBILE_SERVER_URL_KEY = 'bambuddy_mobile_server_url';
+
+/**
+ * The desktop web app talks to its same-origin API.  The Android companion
+ * app is a bundled Capacitor webview, so it needs a user-configurable server
+ * origin (the data always remains on that server).  Keeping this lookup here
+ * means every existing API method, including downloads and image URLs, follows
+ * the same setting without creating a second client implementation.
+ */
+export function normalizeServerUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return trimmed.endsWith('/api/v1') ? trimmed.slice(0, -7) : trimmed;
+}
+
+export function getMobileServerUrl(): string {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    return normalizeServerUrl(localStorage.getItem(MOBILE_SERVER_URL_KEY) ?? '');
+  } catch {
+    return '';
+  }
+}
+
+export function setMobileServerUrl(value: string | null): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (value === null || !normalizeServerUrl(value)) {
+      localStorage.removeItem(MOBILE_SERVER_URL_KEY);
+      return;
+    }
+    localStorage.setItem(MOBILE_SERVER_URL_KEY, normalizeServerUrl(value));
+  } catch {
+    // The API still works in-memory for normal desktop use if storage is off.
+  }
+}
+
+export function getApiBase(): string {
+  const serverUrl = getMobileServerUrl();
+  return serverUrl ? `${serverUrl}${DEFAULT_API_BASE}` : DEFAULT_API_BASE;
+}
+
+// URL helpers are evaluated during module startup. The mobile settings screen
+// reloads the app after changing the server, while request() reads the current
+// value for normal API calls.
+const API_BASE = getApiBase();
 
 export class ApiError extends Error {
   status: number;
@@ -114,7 +160,7 @@ export async function request<T>(
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await fetch(`${getApiBase()}${endpoint}`, {
     ...options,
     cache: 'no-store', // Prevent browser caching of API responses
     credentials: 'include', // Required for HttpOnly cookies (e.g. 2fa_challenge)
