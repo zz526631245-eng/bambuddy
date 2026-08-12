@@ -22,7 +22,7 @@ export function HubNav({ items, ariaLabel, onSelect, activeTo }: HubNavProps) {
   const location = useLocation();
 
   return (
-    <nav aria-label={ariaLabel} className="rounded-lg border border-bambu-dark-tertiary bg-bambu-dark-secondary/60 p-2">
+    <nav aria-label={ariaLabel} className="sticky top-2 z-30 rounded-lg border border-bambu-dark-tertiary bg-bambu-dark-secondary/95 p-2 shadow-lg backdrop-blur">
       <div className="mb-2 px-2 text-xs text-bambu-gray">相关功能</div>
       <div className="flex flex-wrap gap-2">
         {items.map(item => {

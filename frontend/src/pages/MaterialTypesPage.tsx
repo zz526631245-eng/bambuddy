@@ -65,10 +65,7 @@ export function MaterialTypesPage() {
     if (!generateMaterial || quantity < 1) return;
     batch.mutate({ operation_id: operationId('consumable-batch'), material_type_id: generateMaterial.id, quantity });
   };
-  const selectSection = (to: string) => {
-    setActiveSection(to);
-    if (to !== '/material-types') window.setTimeout(() => document.getElementById('consumables-related-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
-  };
+  const selectSection = (to: string) => setActiveSection(to);
 
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
     {isLoopbackPage() && !import.meta.env.VITE_PUBLIC_BASE_URL && <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">当前页面是 127.0.0.1，生成的二维码手机无法访问。请使用手机可访问的 HTTPS 地址打开本页面，或配置 VITE_PUBLIC_BASE_URL。</div>}
@@ -78,6 +75,11 @@ export function MaterialTypesPage() {
       { to: '/consumable-library', label: '扫码入库' },
       { to: '/printer-consumables', label: '打印机绑定' },
     ]} />
+    {activeSection !== '/material-types' && <section className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
+      {activeSection === '/consumable-library' && <ConsumableLibraryPage />}
+      {activeSection === '/printer-consumables' && <PrinterConsumablesPage />}
+    </section>}
+    {activeSection === '/material-types' && <>
     <Card><CardContent><form onSubmit={submit} className="grid sm:grid-cols-2 lg:grid-cols-7 gap-3">
       <input required placeholder="编码" value={form.code} onChange={event => setForm({ ...form, code: event.target.value })} className={inputClass} />
       <input required placeholder="材料 PLA" value={form.material} onChange={event => setForm({ ...form, material: event.target.value })} className={inputClass} />
@@ -103,10 +105,7 @@ export function MaterialTypesPage() {
       </CardContent></Card>;
     })}</div>
 
-    {activeSection !== '/material-types' && <section id="consumables-related-content" className="scroll-mt-6 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
-      {activeSection === '/consumable-library' && <ConsumableLibraryPage />}
-      {activeSection === '/printer-consumables' && <PrinterConsumablesPage />}
-    </section>}
+    </>}
     {generateMaterial && <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><Card className="w-full max-w-md"><CardContent><h2 className="text-xl font-semibold text-white">生成耗材卷二维码</h2><p className="text-bambu-gray mt-2">{generateMaterial.brand || '未指定品牌'} · {generateMaterial.material} · {generateMaterial.color_name || generateMaterial.color_hex}</p><form onSubmit={generate} className="mt-5 space-y-4"><label className="block text-sm text-bambu-gray">需要生成的卷数<input aria-label="生成数量" type="number" min="1" max="1000" value={quantity} onChange={event => setQuantity(Number(event.target.value))} className={'mt-1 w-full ' + inputClass} /></label>{batch.error && <p className="text-red-400 text-sm">{String(batch.error)}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setGenerateMaterial(null)}>取消</Button><Button type="submit" disabled={batch.isPending || quantity < 1}>生成二维码</Button></div></form></CardContent></Card></div>}
   </div>;
 }

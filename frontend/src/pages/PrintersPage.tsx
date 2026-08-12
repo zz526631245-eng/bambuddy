@@ -7637,10 +7637,7 @@ export function PrintersPage() {
   }[activeAccent];
   const [showAddModal, setShowAddModal] = useState(false);
   const [activeSection, setActiveSection] = useState('/');
-  const selectSection = (to: string) => {
-    setActiveSection(to);
-    if (to !== '/') window.setTimeout(() => document.getElementById('printers-related-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
-  };
+  const selectSection = (to: string) => setActiveSection(to);
   const [hideDisconnected, setHideDisconnected] = useState(() => {
     return localStorage.getItem('hideDisconnectedPrinters') === 'true';
   });
@@ -8588,6 +8585,13 @@ export function PrintersPage() {
               { to: '/production-printer-status', label: '生产状态' },
             ]} />
           </div>
+          {activeSection !== '/' && (
+            <section className="mt-4 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
+              {activeSection === '/printer-profiles' && <PrinterProfilesPage />}
+              {activeSection === '/maintenance' && <MaintenancePage />}
+              {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
+            </section>
+          )}
         </div>
         <div ref={toolbarRef} className="relative flex items-center gap-2">
           {/* Only show search bar when printers exist */}
@@ -8933,13 +8937,6 @@ export function PrintersPage() {
           })}
         />
       ))}
-      {activeSection !== '/' && (
-        <section id="printers-related-content" className="mt-6 scroll-mt-6 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
-          {activeSection === '/printer-profiles' && <PrinterProfilesPage />}
-          {activeSection === '/maintenance' && <MaintenancePage />}
-          {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
-        </section>
-      )}
     </div>
   );
 }

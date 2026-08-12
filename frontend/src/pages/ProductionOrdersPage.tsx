@@ -44,10 +44,7 @@ export function ProductionOrdersPage() {
   const productIdsWithOrders = new Set(orders.map(order => order.product_id));
   const summaryByProduct = new Map(summaries.map(summary => [summary.product_id, summary]));
   const addQuantity = (event: FormEvent, productId: number) => { event.preventDefault(); if (additionalQuantity > 0 && !append.isPending) append.mutate({ productId, quantity: additionalQuantity }); };
-  const selectSection = (to: string) => {
-    setActiveSection(to);
-    if (to !== '/production-orders') window.setTimeout(() => document.getElementById('production-related-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
-  };
+  const selectSection = (to: string) => setActiveSection(to);
 
   return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
     <div className="flex flex-wrap justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">生产订单</h1><p className="text-bambu-gray mt-1">选择产品和产品源文件，系统根据文件版本创建生产快照。</p></div><Button onClick={() => setShow(!show)}><Plus size={18} />新建生产订单</Button></div>
@@ -57,6 +54,12 @@ export function ProductionOrdersPage() {
       { to: '/production-printer-status', label: '打印机状态' },
       { to: '/slice-library', label: '切片库' },
     ]} />
+    {activeSection !== '/production-orders' && <section className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
+      {activeSection === '/queue' && <QueuePage />}
+      {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
+      {activeSection === '/slice-library' && <SliceLibraryPage />}
+    </section>}
+    {activeSection === '/production-orders' && <>
     {show && <Card><CardContent><form onSubmit={submit} className="grid md:grid-cols-3 gap-3">
       <p className="text-sm text-bambu-gray md:col-span-3">订单编号由系统自动生成，例如 PO-20260720-001。</p>
       <Button type="button" variant="secondary" className="justify-start" onClick={() => { setProductPickerOpen(true); setProductSearch(''); }}>{selectedProduct ? `${selectedProduct.sku} · ${selectedProduct.name}` : '选择产品'}</Button>
@@ -86,11 +89,7 @@ export function ProductionOrdersPage() {
     })}</div></section>}
 
     {orders.length === 0 ? <Card><CardContent className="text-center py-16 text-bambu-gray"><ClipboardList className="mx-auto mb-3" />还没有生产订单。</CardContent></Card> : <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{orders.map(order => <Link key={order.id} to={`/production-orders/${order.id}`}><Card className="h-full hover:border-bambu-green"><CardContent><div className="flex justify-between"><span className="font-mono text-bambu-green">{order.order_number}</span><span className="text-white">{statusText[order.status] || order.status}</span></div><h2 className="text-xl text-white font-semibold mt-4">{String(order.product_snapshot?.name || `产品 ${order.product_id}`)}</h2><p className="text-bambu-gray mt-2">生产 {order.quantity} 套 · {String(order.product_file_snapshot?.name || '产品源文件')}</p><p className="text-bambu-green mt-5">查看数量进度和任务草稿 →</p></CardContent></Card></Link>)}</div>}
-    {activeSection !== '/production-orders' && <section id="production-related-content" className="scroll-mt-6 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
-      {activeSection === '/queue' && <QueuePage />}
-      {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
-      {activeSection === '/slice-library' && <SliceLibraryPage />}
-    </section>}
+    </>}
     <style>{`.stage8-input{background:#18181b;border:1px solid #3f3f46;border-radius:.5rem;padding:.55rem .75rem;color:white;min-width:0}`}</style>
   </div>;
 }
