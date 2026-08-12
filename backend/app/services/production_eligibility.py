@@ -108,6 +108,7 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
     )
     profile = None
     printer = None
+    virtual_fallbacks: list[tuple[PrinterProfile, VirtualPrinter]] = []
     for profile_id in profile_ids:
         candidate_profile = await db.get(PrinterProfile, profile_id)
         if (
@@ -125,34 +126,13 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
         if compatible_models and candidate_profile.printer_model not in compatible_models:
             continue
         virtual_model_names = {"N2S": "A1", "N9": "A2L"}
-        virtual_query = select(VirtualPrinter).where(VirtualPrinter.model.in_([code for code, name in virtual_model_names.items() if name == candidate_profile.printer_model]))
+        virtual_query = select(VirtualPrinter).where(
+            VirtualPrinter.model.in_(
+                [code for code, name in virtual_model_names.items() if name == candidate_profile.printer_model]
+            )
+        )
         virtual_candidates = list((await db.execute(virtual_query.order_by(VirtualPrinter.id))).scalars().all())
-        for virtual in virtual_candidates:
-            if not await availability(db, "virtual_printer", virtual.id):
-                continue
-            virtual_busy = await db.scalar(
-                select(
-                    exists().where(
-                        PlateJob.virtual_printer_id == virtual.id,
-                        PlateJob.status.in_(ACTIVE_VIRTUAL_JOB_STATUSES),
-                    )
-                )
-            )
-            if virtual_busy:
-                continue
-            capability_result = match_filament_requirements(
-                filament_requirements,
-                capabilities_from_rows(
-                    supported_materials=virtual.supported_materials,
-                    supported_colors=virtual.supported_colors,
-                    loaded_filaments=virtual.loaded_filaments,
-                ),
-            )
-            if (
-                capability_result.matched
-                and virtual.units_per_plate_capacity >= max(1, int(file_snapshot.get("units_per_plate", 1)))
-            ):
-                return ProductionAssignment(printer=None, profile=candidate_profile, required_filament_types=None, virtual_printer=virtual)
+        virtual_fallbacks.extend((candidate_profile, virtual) for virtual in virtual_candidates)
         query = (
             select(Printer)
             .where(
@@ -185,18 +165,51 @@ async def find_assignment(db: AsyncSession, job: PlateJob) -> ProductionAssignme
             break
         if printer is not None:
             break
-    if profile is None or printer is None:
-        return None
+    if profile is not None and printer is not None:
+        required_filament_types = None
+        material_type_id = snapshot.get("material_type_id")
+        if material_type_id:
+            material = await db.get(MaterialType, int(material_type_id))
+            if material and material.material:
+                required_filament_types = json.dumps([material.material.strip().upper()])
 
-    required_filament_types = None
-    material_type_id = snapshot.get("material_type_id")
-    if material_type_id:
-        material = await db.get(MaterialType, int(material_type_id))
-        if material and material.material:
-            required_filament_types = json.dumps([material.material.strip().upper()])
+        return ProductionAssignment(
+            printer=printer,
+            profile=profile,
+            required_filament_types=required_filament_types,
+        )
 
-    return ProductionAssignment(
-        printer=printer,
-        profile=profile,
-        required_filament_types=required_filament_types,
-    )
+    # Virtual printers remain available for the Stage 11 software workflow,
+    # but an enabled real printer is always selected first when both match.
+    for candidate_profile, virtual in virtual_fallbacks:
+        if not await availability(db, "virtual_printer", virtual.id):
+            continue
+        virtual_busy = await db.scalar(
+            select(
+                exists().where(
+                    PlateJob.virtual_printer_id == virtual.id,
+                    PlateJob.status.in_(ACTIVE_VIRTUAL_JOB_STATUSES),
+                )
+            )
+        )
+        if virtual_busy:
+            continue
+        capability_result = match_filament_requirements(
+            filament_requirements,
+            capabilities_from_rows(
+                supported_materials=virtual.supported_materials,
+                supported_colors=virtual.supported_colors,
+                loaded_filaments=virtual.loaded_filaments,
+            ),
+        )
+        if (
+            capability_result.matched
+            and virtual.units_per_plate_capacity >= max(1, int(file_snapshot.get("units_per_plate", 1)))
+        ):
+            return ProductionAssignment(
+                printer=None,
+                profile=candidate_profile,
+                required_filament_types=None,
+                virtual_printer=virtual,
+            )
+    return None

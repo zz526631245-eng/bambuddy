@@ -1422,7 +1422,12 @@ async def start_queue_item(
         raise HTTPException(400, f"Can only start pending items, current status: '{item.status}'")
 
     production_job_id = await _production_plate_job_id(db, item.id)
-    if production_job_id is not None:
+    production_job = await db.get(PlateJob, production_job_id) if production_job_id is not None else None
+    if production_job_id is not None and (
+        production_job is None
+        or production_job.virtual_printer_id is not None
+        or production_job.status != "ready"
+    ):
         raise HTTPException(
             status_code=409,
             detail={

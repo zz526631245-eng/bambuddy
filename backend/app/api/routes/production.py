@@ -60,6 +60,8 @@ from backend.app.schemas.production import (
     ProductionRecipeResponse,
     ProductionRequirementResponse,
     ProductOrderSummaryResponse,
+    RealPrinterDispatchRequest,
+    RealPrinterDispatchResponse,
     RealSliceRequest,
     SliceArtifactResponse,
 )
@@ -90,6 +92,7 @@ from backend.app.services.production_printer_status import (
     heartbeat as record_printer_heartbeat,
     list_statuses as list_printer_statuses,
 )
+from backend.app.services.production_real_dispatch import dispatch_real_slice_artifact
 from backend.app.services.production_slicer import (
     SlicePlanningError,
     _absolute_library_path,
@@ -116,16 +119,16 @@ async def post_production_printer_heartbeat(
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CONTROL),
 ):
-    """Record a Stage 13 simulation heartbeat for a printer target.
-
-    This endpoint is the future real-adapter seam. Stage 13 does not open a
-    device connection; the UI and tests send simulated telemetry here.
-    """
+    """Record simulated telemetry for virtual targets and adapter telemetry."""
 
     try:
+        if payload.target_type == "printer" and payload.source == "stage13_simulation":
+            raise ValueError("真实打印机状态由第14阶段适配器自动读取，不能写入模拟心跳")
         return await record_printer_heartbeat(db, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/consumable-library", response_model=list[ConsumableUnitResponse])
@@ -802,17 +805,30 @@ async def download_slice_artifact(
     )
 
 
-@router.post("/slice-artifacts/{artifact_id}/dispatch")
+@router.post("/slice-artifacts/{artifact_id}/dispatch", response_model=RealPrinterDispatchResponse)
 async def dispatch_slice_artifact(
     artifact_id: int,
+    payload: RealPrinterDispatchRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_CREATE),
 ):
-    """Keep the future direct-send contract explicit but locked before Stage 14."""
+    """Hand one sliced artifact to one real printer after confirmation."""
 
-    if await db.get(SliceArtifact, artifact_id) is None:
-        raise HTTPException(status_code=404, detail="切片结果不存在")
-    raise HTTPException(status_code=409, detail="阶段14前禁止发送真实打印；当前只能下载或复用切片结果")
+    if payload is None:
+        if await db.get(SliceArtifact, artifact_id) is None:
+            raise HTTPException(status_code=404, detail="切片结果不存在")
+        raise HTTPException(status_code=409, detail="第14阶段受控发送需要 operation_id、printer_id 和 confirm=true")
+    try:
+        return await dispatch_real_slice_artifact(
+            db,
+            artifact_id,
+            payload,
+            actor_user_id=current_user.id if current_user else None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/plate-jobs/{plate_job_id}/slice", response_model=PlateJobResponse)

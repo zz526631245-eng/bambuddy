@@ -2273,6 +2273,16 @@ async def on_print_start(printer_id: int, data: dict):
 
     await ws_manager.send_print_start(printer_id, data)
 
+    # Stage 14: a production queue item is marked printing only after the
+    # printer's real MQTT callback confirms that it has started.
+    try:
+        from backend.app.services.production_real_dispatch import mark_real_job_started
+
+        async with async_session() as db:
+            await mark_real_job_started(db, printer_id)
+    except Exception as exc:
+        logger.warning("Stage 14 production start mirror failed for printer %s: %s", printer_id, exc)
+
     # Notify when the print-start AMS mapping references tray slots without spool assignments.
     await notify_missing_spool_assignments_on_print_start(printer_id, data, logger)
 
@@ -4292,6 +4302,15 @@ async def on_print_complete(printer_id: int, data: dict):
                 logger.info("Updated queue item %s status to %s", item.id, queue_status)
 
         await run_with_retry(_update_queue_status, label="queue status update")
+
+        if queue_item_id is not None and queue_status is not None:
+            try:
+                from backend.app.services.production_real_dispatch import mark_real_job_finished
+
+                async with async_session() as db:
+                    await mark_real_job_finished(db, queue_item_id, queue_status)
+            except Exception as exc:
+                logger.warning("Stage 14 production completion mirror failed for queue %s: %s", queue_item_id, exc)
 
         # Post-commit side effects (notifications, MQTT relay, auto-off) use
         # their own sessions and have their own error handling — no retry needed.

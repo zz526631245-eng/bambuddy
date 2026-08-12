@@ -435,6 +435,31 @@ class RealSliceRequest(BaseModel):
     target_printer_model: str | None = Field(default=None, min_length=1, max_length=100)
 
 
+class RealPrinterDispatchRequest(BaseModel):
+    """Explicit Stage 14 confirmation for one real-printer dispatch."""
+
+    operation_id: str = Field(min_length=1, max_length=100)
+    printer_id: int = Field(gt=0)
+    plate_job_id: int | None = Field(default=None, gt=0)
+    confirm: bool = False
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
+
+
+class RealPrinterDispatchResponse(BaseModel):
+    operation_id: str
+    artifact_id: int
+    plate_job_id: int | None
+    queue_item_id: int
+    printer_id: int
+    printer_name: str
+    printer_model: str | None
+    queue_status: str
+    manual_confirmation: bool
+    transport: str
+    replayed: bool = False
+
+
 class SliceArtifactResponse(BaseModel):
     id: int
     source_product_file_id: int

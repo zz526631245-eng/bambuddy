@@ -42,6 +42,11 @@ export interface SliceArtifact {
   print_time_seconds?:number|null; filament_used_g?:number|null; filament_used_mm?:number|null;
   output_sha256:string; created_at:string; updated_at:string;
 }
+export interface RealPrinterDispatch {
+  operation_id:string; artifact_id:number; plate_job_id?:number|null; queue_item_id:number;
+  printer_id:number; printer_name:string; printer_model?:string|null; queue_status:string;
+  manual_confirmation:boolean; transport:string; replayed:boolean;
+}
 export interface PrinterConsumable {
   id:number; printer_id?:number|null; virtual_printer_id?:number|null;
   printer_name?:string|null; virtual_printer_name?:string|null; spool_id?:number|null;
@@ -98,6 +103,8 @@ export const productionApi={
     request<PlateJob>(`/production/plate-jobs/${plateJobId}/workflow/${action}`,{method:'POST',body:JSON.stringify({operation_id:operationId(`plate-${action}`),...(data ?? {})})}),
   realSlice:(plateJobId:number,data?:{target_printer_preset?:string;target_printer_model?:string})=>request<PlateJob>(`/production/plate-jobs/${plateJobId}/real-slice`,{method:'POST',body:JSON.stringify(data ?? {})}),
   listSliceArtifacts:()=>request<SliceArtifact[]>('/production/slice-artifacts'),
+  dispatchSliceArtifact:(artifactId:number,data:{printer_id:number;plate_job_id?:number})=>
+    request<RealPrinterDispatch>(`/production/slice-artifacts/${artifactId}/dispatch`,{method:'POST',body:JSON.stringify({operation_id:operationId('stage14-dispatch'),confirm:true,...data})}),
   listConsumables:()=>request<PrinterConsumable[]>('/production/printer-consumables'),
   listConsumableTargets:()=>request<PrinterConsumableTarget[]>('/production/printer-consumables/targets'),
   scanConsumable:(data:{operation_id:string;scan_code:string;material?:string|null;color_hex?:string|null;color_name?:string|null;spool_id?:number|null;consumable_unit_id?:number|null;printer_id?:number|null;virtual_printer_id?:number|null})=>

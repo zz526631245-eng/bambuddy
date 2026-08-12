@@ -17,10 +17,30 @@ from backend.app.models.printer import Printer
 from backend.app.models.production_printer_status import ProductionPrinterStatus
 from backend.app.models.virtual_printer import VirtualPrinter
 from backend.app.schemas.production import PrinterStatusHeartbeat
+from backend.app.services.printer_manager import printer_manager
 
 HEARTBEAT_TIMEOUT_SECONDS = 30
 UNAVAILABLE_STATES = frozenset({"offline", "error", "maintenance"})
 KNOWN_STATES = frozenset({"unknown", "idle", "printing", "paused", "finished", *UNAVAILABLE_STATES})
+
+
+def _normalise_real_state(raw_state: str | None, *, connected: bool) -> str:
+    """Map Bambuddy's MQTT state names to the production status contract."""
+
+    if not connected:
+        return "offline"
+    state = str(raw_state or "").upper()
+    if state in {"RUNNING", "PREPARE", "SLICING"}:
+        return "printing"
+    if state == "PAUSE":
+        return "paused"
+    if state in {"FINISH", "COMPLETED"}:
+        return "finished"
+    if state in {"FAILED", "ERROR"}:
+        return "error"
+    if state in {"IDLE", ""}:
+        return "idle"
+    return "unknown"
 
 
 def target_key(target_type: str, target_id: int) -> str:
@@ -92,14 +112,56 @@ async def _serialize(
         "loaded_filaments": (row.loaded_filaments if row else target.loaded_filaments) or [],
         "telemetry": (row.telemetry if row else {}) or {},
         "heartbeat_timeout_seconds": HEARTBEAT_TIMEOUT_SECONDS,
-        "transport_enabled": False,
+        "transport_enabled": bool(row and row.source == "stage14_real_adapter"),
         "replayed": replayed,
     }
+
+
+async def _sync_real_printer_status(db: AsyncSession, printer: Printer) -> bool:
+    """Persist the current MQTT snapshot for a connected real printer.
+
+    The core printer manager owns connections.  This production adapter only
+    translates its already-received state and never opens a second connection.
+    """
+
+    state = printer_manager.get_status(printer.id)
+    if state is None:
+        return False
+    connected = bool(getattr(state, "connected", False))
+    key = target_key("printer", printer.id)
+    row = await db.scalar(select(ProductionPrinterStatus).where(ProductionPrinterStatus.target_key == key))
+    now = _now()
+    if row is None:
+        row = ProductionPrinterStatus(target_key=key, target_type="printer", target_id=printer.id)
+        db.add(row)
+    row.state = _normalise_real_state(getattr(state, "state", None), connected=connected)
+    row.source = "stage14_real_adapter"
+    row.last_heartbeat_at = now
+    row.observed_at = now
+    row.current_job_state = getattr(state, "state", None)
+    row.fault_code = None
+    row.fault_message = None
+    row.loaded_filaments = printer.loaded_filaments or []
+    row.telemetry = {
+        "progress": getattr(state, "progress", None),
+        "remaining_time": getattr(state, "remaining_time", None),
+        "layer_num": getattr(state, "layer_num", None),
+        "total_layers": getattr(state, "total_layers", None),
+        "gcode_file": getattr(state, "gcode_file", None),
+        "subtask_name": getattr(state, "subtask_name", None),
+        "connected": connected,
+    }
+    return True
 
 
 async def list_statuses(db: AsyncSession) -> list[dict]:
     printers = list((await db.execute(select(Printer).where(Printer.is_active.is_(True)).order_by(Printer.id))).scalars())
     virtuals = list((await db.execute(select(VirtualPrinter).order_by(VirtualPrinter.position, VirtualPrinter.id))).scalars())
+    updated = False
+    for printer in printers:
+        updated = await _sync_real_printer_status(db, printer) or updated
+    if updated:
+        await db.commit()
     rows = list((await db.execute(select(ProductionPrinterStatus))).scalars())
     by_key = {row.target_key: row for row in rows}
     result: list[dict] = []

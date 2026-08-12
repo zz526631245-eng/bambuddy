@@ -2469,7 +2469,12 @@ class PrintScheduler:
         production_job_id = (
             await db.execute(select(PlateJob.id).where(PlateJob.queue_item_id == item.id))
         ).scalar_one_or_none()
-        if production_job_id is not None:
+        production_job = await db.get(PlateJob, production_job_id) if production_job_id is not None else None
+        if production_job_id is not None and (
+            production_job is None
+            or production_job.virtual_printer_id is not None
+            or production_job.status != "ready"
+        ):
             item.manual_start = True
             await db.commit()
             logger.warning(

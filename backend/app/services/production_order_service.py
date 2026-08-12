@@ -606,11 +606,15 @@ async def advance_virtual_plate_job(
     ).scalar_one_or_none()
     if job is None:
         raise ProductionOrderError("打印任务不存在")
-    if job.virtual_printer_id is None:
+    if job.virtual_printer_id is None and action not in {"quality", "cleanup"}:
         raise ProductionOrderError("阶段11只允许操作虚拟打印机任务")
 
     now = datetime.utcnow()
-    payload: dict = {"plate_job_id": job.id, "action": action, "simulation_only": True}
+    payload: dict = {
+        "plate_job_id": job.id,
+        "action": action,
+        "simulation_only": job.virtual_printer_id is not None,
+    }
     if action == "prepare":
         if job.status != PlateJobStatus.ASSIGNED.value:
             raise ProductionOrderError("只有已分配任务可以进入待打印")
