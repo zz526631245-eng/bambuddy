@@ -5,7 +5,7 @@ jobs hand off to Bambuddy's existing queue and scheduler.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
@@ -24,7 +24,7 @@ from backend.app.models.printer import Printer
 from backend.app.models.printer_profile import PrinterProfile
 from backend.app.models.product import Product
 from backend.app.models.product_master import MaterialTypeSpoolMapping, ProductComponent, ProductionBOMItem
-from backend.app.models.production import PlateJob, ProductionOrder, ProductionRequirement
+from backend.app.models.production import PlateJob, ProductionRequirement
 from backend.app.models.production_recipe import ProductionRecipe, production_recipe_profiles
 from backend.app.models.slice_artifact import SliceArtifact
 from backend.app.models.slicer_pipeline import SlicerPipeline
@@ -55,9 +55,12 @@ from backend.app.schemas.production import (
     PrinterProfileCreate,
     PrinterProfileResponse,
     PrinterStatusHeartbeat,
+    ProductionOrderAvailabilityResponse,
     ProductionOrderCancelAction,
     ProductionOrderCreate,
     ProductionOrderDetail,
+    ProductionOrderQuantityAppend,
+    ProductionOrderReplan,
     ProductionOrderResponse,
     ProductionOrderStatusAction,
     ProductionOrderUpdate,
@@ -86,15 +89,19 @@ from backend.app.services.production_consumption import consumption_summary
 from backend.app.services.production_order_service import (
     ProductionOrderError,
     advance_virtual_plate_job,
+    append_order_quantity,
     cancel_plate_job,
     change_order_status,
     confirm_plate_jobs,
     create_order as create_production_order,
     delete_order as delete_production_order,
     delete_plate_job,
+    list_production_orders,
+    order_availability,
     order_detail,
     preview_plate_jobs,
     product_order_summaries,
+    replan_order,
     review_slice_time,
     update_order as update_production_order,
 )
@@ -566,10 +573,21 @@ async def delete_recipe(
 
 @router.get("/orders", response_model=list[ProductionOrderResponse])
 async def list_orders(
+    history: bool = Query(False),
+    search: str | None = Query(default=None, max_length=100),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_READ),
 ):
-    return list((await db.execute(select(ProductionOrder).order_by(ProductionOrder.id))).scalars().all())
+    end_date = datetime.combine(to_date + timedelta(days=1), time.min) if to_date else None
+    return await list_production_orders(
+        db,
+        history=history,
+        search=search,
+        from_date=datetime.combine(from_date, time.min) if from_date else None,
+        to_date=end_date,
+    )
 
 
 @router.get("/product-summaries", response_model=list[ProductOrderSummaryResponse])
@@ -597,9 +615,23 @@ async def create_order(
         raise HTTPException(422, str(exc)) from exc
     except IntegrityError as exc:
         raise HTTPException(409, "生产订单编号已经存在") from exc
-    if replayed:
+    if replayed or getattr(order, "_merged", False):
         response.status_code = status.HTTP_200_OK
+    response.headers["X-Order-Merged"] = "true" if getattr(order, "_merged", False) else "false"
     return order
+
+
+@router.get("/orders/availability", response_model=ProductionOrderAvailabilityResponse)
+async def get_order_availability(
+    product_id: int = Query(gt=0),
+    product_file_id: int = Query(gt=0),
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_READ),
+):
+    try:
+        return await order_availability(db, product_id=product_id, product_file_id=product_file_id)
+    except ProductionOrderError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/orders/{order_id}", response_model=ProductionOrderDetail)
@@ -630,6 +662,47 @@ async def update_order(
         )
     except ProductionOrderError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/orders/{order_id}/quantity", response_model=ProductionOrderResponse)
+async def append_order_quantity_route(
+    order_id: int,
+    payload: ProductionOrderQuantityAppend,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_UPDATE),
+):
+    try:
+        order, replayed = await append_order_quantity(
+            db,
+            order_id,
+            operation_id=payload.operation_id,
+            quantity=payload.quantity,
+            actor_user_id=current_user.id if current_user else None,
+        )
+        return order
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/orders/{order_id}/replan", response_model=ProductionOrderResponse)
+async def replan_order_route(
+    order_id: int,
+    payload: ProductionOrderReplan,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRODUCTION_ORDERS_UPDATE),
+):
+    try:
+        order, _ = await replan_order(
+            db,
+            order_id,
+            operation_id=payload.operation_id,
+            due_at=payload.due_at,
+            priority=payload.priority,
+            actor_user_id=current_user.id if current_user else None,
+        )
+        return order
+    except ProductionOrderError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/orders/{order_id}/status", response_model=ProductionOrderResponse)

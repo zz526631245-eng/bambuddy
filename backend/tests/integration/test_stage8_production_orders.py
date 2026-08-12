@@ -67,16 +67,19 @@ async def _master_data(client: AsyncClient, suffix: str = "A") -> dict:
     }
 
 
-async def _create_order(client: AsyncClient, master: dict, suffix: str = "A", quantity: int = 5):
+async def _create_order(client: AsyncClient, master: dict, suffix: str = "A", quantity: int = 5, due_at: str | None = None):
+    payload = {
+        "operation_id": f"create-order-{suffix}",
+        "order_number": f"ORDER-{suffix}",
+        "product_id": master["product"]["id"],
+        "quantity": quantity,
+        "priority": 3,
+    }
+    if due_at is not None:
+        payload["due_at"] = due_at
     return await client.post(
         "/api/v1/production/orders",
-        json={
-            "operation_id": f"create-order-{suffix}",
-            "order_number": f"ORDER-{suffix}",
-            "product_id": master["product"]["id"],
-            "quantity": quantity,
-            "priority": 3,
-        },
+        json=payload,
     )
 
 
@@ -250,3 +253,48 @@ async def test_order_does_not_fall_back_to_legacy_bom(async_client: AsyncClient)
 
     assert response.status_code == 422
     assert response.json()["detail"] == "请先上传产品源文件，产品尚未配置可生产的源文件"
+
+
+async def test_same_product_file_and_due_date_merge_into_one_active_batch(async_client: AsyncClient):
+    master = await _master_data(async_client, "MERGE")
+    first = await _create_order(async_client, master, "MERGE-1", quantity=2, due_at="2030-01-02T00:00:00Z")
+    second = await _create_order(async_client, master, "MERGE-2", quantity=3, due_at="2030-01-02T00:00:00Z")
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.headers.get("x-order-merged") == "true"
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["quantity"] == 5
+    assert len((await async_client.get("/api/v1/production/orders")).json()) == 1
+
+    appended = await async_client.post(
+        f"/api/v1/production/orders/{first.json()['id']}/quantity",
+        json={"operation_id": "append-merge-batch", "quantity": 4},
+    )
+    assert appended.status_code == 200, appended.text
+    assert appended.json()["quantity"] == 9
+
+
+async def test_started_order_delete_is_soft_deleted_and_searchable_in_history(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+):
+    master = await _master_data(async_client, "HISTORY")
+    order = (await _create_order(async_client, master, "HISTORY", quantity=1)).json()
+    preview = (await async_client.get(f"/api/v1/production/orders/{order['id']}/plate-jobs/preview")).json()
+    confirmed = await async_client.post(
+        f"/api/v1/production/orders/{order['id']}/plate-jobs/confirm",
+        json={"operation_id": "confirm-history-job", "items": preview["items"]},
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    await db_session.execute(
+        text("UPDATE plate_jobs SET status = 'printing', print_started_at = CURRENT_TIMESTAMP WHERE requirement_id IN (SELECT id FROM production_requirements WHERE order_id = :id)"),
+        {"id": order["id"]},
+    )
+    await db_session.commit()
+    deleted = await async_client.delete(f"/api/v1/production/orders/{order['id']}")
+    assert deleted.status_code == 204, deleted.text
+    assert not any(item["id"] == order["id"] for item in (await async_client.get("/api/v1/production/orders")).json())
+    history = await async_client.get("/api/v1/production/orders?history=true")
+    assert history.status_code == 200
+    assert history.json()[0]["id"] == order["id"]
+    assert history.json()[0]["deleted_at"] is not None

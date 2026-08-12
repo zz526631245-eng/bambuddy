@@ -25,9 +25,13 @@ export interface ProductionOperation {
 }
 export interface ProductionOrder {
   id:number; order_number:string; product_id:number; product_file_snapshot?:Record<string,unknown>|null; quantity:number; priority:number; status:string;
-  due_at?:string|null; notes?:string|null; product_snapshot?:Record<string,unknown>|null;
+  due_at?:string|null; notes?:string|null; product_snapshot?:Record<string,string|number|null>|null;
   bom_snapshot?:Array<Record<string,unknown>>|null; recipe_snapshot?:Array<Record<string,unknown>>|null;
-  created_at:string; updated_at:string;
+  created_at:string; updated_at:string; deleted_at?:string|null; completed_at?:string|null;
+  priority_label?:string; overdue?:boolean; delivery_status?:'on_track'|'overdue'|'completed'|'cancelled';
+  completed_quantity?:number; printing_quantity?:number; assigned_quantity?:number; quality_quantity?:number;
+  cleanup_quantity?:number; scrap_quantity?:number; remaining_quantity?:number;
+  assigned_printer_names?:string[]; compatible_printer_count?:number; matching_consumable_printer_count?:number;
 }
 export interface ProductionOrderDetail extends ProductionOrder {
   requirements:ProductionRequirement[]; operations:ProductionOperation[];
@@ -96,17 +100,34 @@ export interface PlateJobPreviewItem {
   requirement_id:number; printer_profile_id?:number|null; planned_quantity:number;
   component_name:string; print_plan_name:string;
 }
+export interface ProductionOrderAvailability {
+  product_id:number; product_file_id:number; compatible_printer_count:number; matching_consumable_printer_count:number;
+  available_printer_names:string[]; required_materials:string[]; required_colors:string[];
+}
 
 const operationId=(prefix:string)=>`${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
 
 export const productionApi={
-  listOrders:()=>request<ProductionOrder[]>('/production/orders'),
+  listOrders:(params?:{history?:boolean;search?:string;from_date?:string;to_date?:string})=>{
+    const query = new URLSearchParams();
+    if (params?.history) query.set('history','true');
+    if (params?.search) query.set('search',params.search);
+    if (params?.from_date) query.set('from_date',params.from_date);
+    if (params?.to_date) query.set('to_date',params.to_date);
+    return request<ProductionOrder[]>('/production/orders' + (query.toString() ? `?${query}` : ''));
+  },
   listProductSummaries:()=>request<ProductOrderSummary[]>('/production/product-summaries'),
   getOrder:(id:number)=>request<ProductionOrderDetail>(`/production/orders/${id}`),
   createOrder:(data:{order_number?:string;product_id:number;product_file_id?:number|null;quantity:number;priority:number;due_at?:string|null;notes?:string|null})=>
     request<ProductionOrder>('/production/orders',{method:'POST',body:JSON.stringify({...data,operation_id:operationId('create-order')})}),
   updateOrder:(id:number,data:{priority?:number;due_at?:string|null;notes?:string|null})=>
     request<ProductionOrder>(`/production/orders/${id}`,{method:'PATCH',body:JSON.stringify(data)}),
+  appendOrderQuantity:(id:number,data:{quantity:number})=>
+    request<ProductionOrder>(`/production/orders/${id}/quantity`,{method:'POST',body:JSON.stringify({...data,operation_id:operationId('append-order')})}),
+  replanOrder:(id:number,data:{due_at?:string|null;priority?:number})=>
+    request<ProductionOrder>(`/production/orders/${id}/replan`,{method:'POST',body:JSON.stringify({...data,operation_id:operationId('replan-order')})}),
+  orderAvailability:(productId:number,productFileId:number)=>
+    request<ProductionOrderAvailability>(`/production/orders/availability?product_id=${productId}&product_file_id=${productFileId}`),
   changeStatus:(id:number,action:'pause'|'resume')=>
     request<ProductionOrder>(`/production/orders/${id}/status`,{method:'POST',body:JSON.stringify({operation_id:operationId(action),action})}),
   cancelOrder:(id:number)=>

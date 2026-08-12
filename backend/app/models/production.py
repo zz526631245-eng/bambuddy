@@ -78,6 +78,7 @@ class ProductionOrder(Base):
     __table_args__ = (
         CheckConstraint("quantity >= 0", name="ck_production_orders_quantity_non_negative"),
         CheckConstraint("priority >= 0", name="ck_production_orders_priority_non_negative"),
+        CheckConstraint("priority <= 4", name="ck_production_orders_priority_maximum"),
         CheckConstraint(
             "status IN ('draft', 'planned', 'paused', 'completed', 'cancelled')",
             name="ck_production_orders_status",
@@ -100,6 +101,10 @@ class ProductionOrder(Base):
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    # Stage 16 keeps started/completed orders as an auditable history row when
+    # an operator removes them from the active production workspace.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     product: Mapped[Product] = relationship(back_populates="orders")
     requirements: Mapped[list[ProductionRequirement]] = relationship(

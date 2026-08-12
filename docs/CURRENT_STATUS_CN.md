@@ -285,3 +285,12 @@
 - The consumable library now shows one compact card per specification with in-stock, bound, pending-receipt, depleted, scrapped, and total roll counts.
 - QR-unit scan-in and depletion still use the existing lifecycle; successful scans invalidate the summary immediately.
 - Verification: Stage 12 consumable tests `2 passed`; backend Ruff and frontend lint/build passed.
+
+# 生产中心订单工作台（2026-08-12）
+
+- 生产中心改为深色桌面工作台：交付总览、排产队列、打印机安排、历史订单和低频切片库在页面内切换，不再把用户带到另一个页面；当前订单以表格显示目标、已完成、剩余、打印中、待质检、打印机、优先级和交期。
+- 订单创建支持产品名称/SKU 搜索、源文件选择、五级优先级（最高/高/中/低/极低）、交期和排产预检查；同一产品、同一源文件/材料颜色快照、同一明确交期的未完成订单会在后端合并，追加数量写入原订单并保留操作记录。
+- 后端统一计算订单进度、逾期状态、打印机名称和历史批次数量；逾期未完成批次红色提示，可重新规划交期/优先级。历史订单支持订单号、产品、日期范围筛选，当前视图不会混入已完成或取消批次。
+- 删除规则改为：尚未开始执行的订单物理删除；已经开始/完成的订单软删除并保留打印、质检、清板和耗材审计，不会向真实打印机发送停止命令。分配器排除软删除订单。
+- 新增 `deleted_at`、`completed_at` 可重复迁移，保留现有切片、真实队列、耗材和料盘清理链路；未修改虚拟测试机的真实产品边界。
+- 回归：Stage 8/订单控制/Stage 9 共 `18 passed`，前端生产订单定向测试 `7 passed`，前端 `npm.cmd run build` 通过。尚未构建安装包，真实打印仍需人工验收。

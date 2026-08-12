@@ -1,95 +1,199 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { Box, ClipboardList, Plus } from 'lucide-react';
+import {
+  AlertTriangle,
+  Box,
+  CheckCircle2,
+  ClipboardList,
+  Clock3,
+  Factory,
+  Filter,
+  History,
+  PackageCheck,
+  Plus,
+  Printer,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react';
 import { productionApi } from '../api/production';
 import { productsApi } from '../api/products';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
-import { HubNav } from '../components/HubNav';
 import { QueuePage } from './QueuePage';
 import { ProductionPrinterStatusPage } from './ProductionPrinterStatusPage';
 import { SliceLibraryPage } from './SliceLibraryPage';
 
 const statusText: Record<string, string> = { draft: '草稿', planned: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消' };
+const priorityText: Record<number, string> = { 4: '最高', 3: '高', 2: '中', 1: '低', 0: '极低' };
 const imageUrl = (productId: number, imageId: number) => `/api/v1/products/${productId}/images/${imageId}/file`;
+const formatDate = (value?: string | null) => value ? new Date(value).toLocaleDateString('zh-CN') : '未设置';
+const formatDateTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '未设置';
+
+type View = 'overview' | 'queue' | 'printers' | 'history' | 'slice-library';
 
 export function ProductionOrdersPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: orders = [] } = useQuery({ queryKey: ['production-orders'], queryFn: productionApi.listOrders });
-  const { data: summaries = [] } = useQuery({ queryKey: ['production-product-summaries'], queryFn: productionApi.listProductSummaries });
-  const { data: products = [] } = useQuery({ queryKey: ['products'], queryFn: productsApi.list });
-  const [show, setShow] = useState(false);
+  const [view, setView] = useState<View>('overview');
+  const [showCreate, setShowCreate] = useState(false);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
-  const [addingProductId, setAddingProductId] = useState<number | null>(null);
+  const [activeSearch, setActiveSearch] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyFrom, setHistoryFrom] = useState('');
+  const [historyTo, setHistoryTo] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [addingOrderId, setAddingOrderId] = useState<number | null>(null);
   const [additionalQuantity, setAdditionalQuantity] = useState(1);
-  const [activeSection, setActiveSection] = useState('/production-orders');
-  const [form, setForm] = useState({ product_id: 0, product_file_id: 0, quantity: 1, priority: 0, due_at: '', notes: '' });
-  const create = useMutation({ mutationFn: productionApi.createOrder, onSuccess: order => { queryClient.invalidateQueries({ queryKey: ['production-orders'] }); queryClient.invalidateQueries({ queryKey: ['production-product-summaries'] }); setShow(false); navigate(`/production-orders/${order.id}`); } });
+  const [form, setForm] = useState({ product_id: 0, product_file_id: 0, quantity: 1, priority: 2, due_at: '', notes: '' });
+
+  const { data: orders = [], isFetching: ordersFetching } = useQuery({
+    queryKey: ['production-orders', 'active', activeSearch],
+    queryFn: () => productionApi.listOrders({ search: activeSearch || undefined }),
+    enabled: view === 'overview',
+  });
+  const { data: historyOrders = [], isFetching: historyFetching } = useQuery({
+    queryKey: ['production-orders', 'history', historySearch, historyFrom, historyTo],
+    queryFn: () => productionApi.listOrders({ history: true, search: historySearch || undefined, from_date: historyFrom || undefined, to_date: historyTo || undefined }),
+    enabled: view === 'history',
+  });
+  // Kept as a compact compatibility summary for existing installations. New
+  // order rows remain independent batches and are never merged in the UI.
+  const { data: summaries = [] } = useQuery({ queryKey: ['production-product-summaries'], queryFn: productionApi.listProductSummaries });
+  const { data: products = [] } = useQuery({ queryKey: ['products'], queryFn: productsApi.list });
+  const selectedProduct = products.find(product => product.id === form.product_id);
+  const sourceFiles = selectedProduct?.product_files?.filter(file => file.is_active && (selectedProduct.production_mode !== 'multi_plate' || file.source_plate_index === 0)) ?? [];
+  const hasActiveSourceFile = sourceFiles.length > 0;
+  const availability = useQuery({
+    queryKey: ['production-order-availability', form.product_id, form.product_file_id],
+    queryFn: () => productionApi.orderAvailability(form.product_id, form.product_file_id),
+    enabled: Boolean(form.product_id && form.product_file_id && productionApi.orderAvailability),
+  });
+
+  const create = useMutation({
+    mutationFn: productionApi.createOrder,
+    onSuccess: order => {
+      queryClient.invalidateQueries({ queryKey: ['production-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['production-product-summaries'] });
+      setShowCreate(false);
+      setForm({ product_id: 0, product_file_id: 0, quantity: 1, priority: 2, due_at: '', notes: '' });
+      navigate(`/production-orders/${order.id}`);
+    },
+  });
   const append = useMutation({
-    mutationFn: ({ productId, quantity }: { productId: number; quantity: number }) => {
+    mutationFn: async ({ orderId, productId, quantity }: { orderId?: number; productId: number; quantity: number }) => {
+      if (orderId && productionApi.appendOrderQuantity) return productionApi.appendOrderQuantity(orderId, { quantity });
+      // Compatibility fallback for old API mocks/installations. Current
+      // backend always uses the append endpoint and keeps one batch ledger.
       const product = products.find(item => item.id === productId);
       const latestFile = product?.product_files?.filter(file => file.is_active && (product.production_mode !== 'multi_plate' || file.source_plate_index === 0)).sort((a, b) => b.version - a.version)[0];
       return productionApi.createOrder({ product_id: productId, product_file_id: latestFile?.id ?? null, quantity, priority: 0, due_at: null, notes: '追加生产数量' });
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['production-orders'] }); queryClient.invalidateQueries({ queryKey: ['production-product-summaries'] }); setAddingProductId(null); setAdditionalQuantity(1); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['production-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['production-product-summaries'] });
+      setAddingOrderId(null);
+      setAdditionalQuantity(1);
+    },
   });
-  const selectedProduct = products.find(product => product.id === form.product_id);
-  const hasActiveSourceFile = Boolean(selectedProduct?.product_files?.some(file => file.is_active && (selectedProduct.production_mode !== 'multi_plate' || file.source_plate_index === 0)));
-  const filteredProducts = products.filter(product => `${product.sku} ${product.name}`.toLocaleLowerCase().includes(productSearch.trim().toLocaleLowerCase()));
-  const submit = (event: FormEvent) => { event.preventDefault(); create.mutate({ ...form, product_file_id: form.product_file_id || null, due_at: form.due_at ? new Date(form.due_at).toISOString() : null }); };
-  const productIdsWithOrders = new Set(orders.map(order => order.product_id));
+
+  const filteredProducts = useMemo(() => {
+    const keyword = productSearch.trim().toLocaleLowerCase();
+    return products.filter(product => !keyword || `${product.sku} ${product.name}`.toLocaleLowerCase().includes(keyword));
+  }, [products, productSearch]);
+  const visibleOrders = useMemo(() => {
+    if (priorityFilter === 'all') return orders;
+    return orders.filter(order => String(order.priority) === priorityFilter);
+  }, [orders, priorityFilter]);
+  const stats = useMemo(() => ({
+    active: orders.length,
+    overdue: orders.filter(order => order.overdue || order.delivery_status === 'overdue').length,
+    printing: orders.filter(order => (order.printing_quantity ?? 0) > 0).length,
+    waiting: orders.filter(order => (order.assigned_quantity ?? 0) > 0).length,
+  }), [orders]);
   const summaryByProduct = new Map(summaries.map(summary => [summary.product_id, summary]));
-  const addQuantity = (event: FormEvent, productId: number) => { event.preventDefault(); if (additionalQuantity > 0 && !append.isPending) append.mutate({ productId, quantity: additionalQuantity }); };
-  const selectSection = (to: string) => setActiveSection(to);
 
-  return <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
-    <div className="flex flex-wrap justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">生产订单</h1><p className="text-bambu-gray mt-1">选择产品和产品源文件，系统根据文件版本创建生产快照。</p></div><Button onClick={() => setShow(!show)}><Plus size={18} />新建生产订单</Button></div>
-    <HubNav ariaLabel="生产中心导航" activeTo={activeSection} onSelect={selectSection} items={[
-      { to: '/production-orders', label: '生产订单' },
-      { to: '/queue', label: '打印队列' },
-      { to: '/production-printer-status', label: '打印机状态' },
-      { to: '/slice-library', label: '切片库' },
-    ]} />
-    {activeSection !== '/production-orders' && <section className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30">
-      {activeSection === '/queue' && <QueuePage />}
-      {activeSection === '/production-printer-status' && <ProductionPrinterStatusPage />}
-      {activeSection === '/slice-library' && <SliceLibraryPage />}
-    </section>}
-    {activeSection === '/production-orders' && <>
-    {show && <Card><CardContent><form onSubmit={submit} className="grid md:grid-cols-3 gap-3">
-      <p className="text-sm text-bambu-gray md:col-span-3">订单编号由系统自动生成，例如 PO-20260720-001。</p>
-      <Button type="button" variant="secondary" className="justify-start" onClick={() => { setProductPickerOpen(true); setProductSearch(''); }}>{selectedProduct ? `${selectedProduct.sku} · ${selectedProduct.name}` : '选择产品'}</Button>
-      {hasActiveSourceFile ? <select required value={form.product_file_id} onChange={event => setForm({ ...form, product_file_id: Number(event.target.value) })} className="stage8-input"><option value={0}>选择产品源文件</option>{selectedProduct?.product_files?.filter(file => file.is_active && (selectedProduct.production_mode !== 'multi_plate' || file.source_plate_index === 0)).map(file => <option key={file.id} value={file.id}>{file.product_color || '未命名颜色'} · {file.name} · v{file.version} · {selectedProduct?.production_mode === 'multi_plate' ? `多盘产品（${selectedProduct.source_plate_count} 盘/套）` : file.strategy === 'auto_pack' ? '自动摆盘' : '固定摆盘'}</option>)}</select> : selectedProduct ? <p role="alert" className="text-amber-300 md:col-span-2">请先上传产品源文件</p> : null}
-      <label className="text-white">需要生产数量（套）<input aria-label="需要生产数量（套）" required type="number" min="1" value={form.quantity} onChange={event => setForm({ ...form, quantity: Number(event.target.value) })} className="stage8-input block w-full mt-1" placeholder="需要生产数量（套）" /></label>
-      <label className="text-white">优先级<input aria-label="优先级" type="number" min="0" value={form.priority} onChange={event => setForm({ ...form, priority: Number(event.target.value) })} className="stage8-input block w-full mt-1" /></label>
-      <label className="text-white">要求完成时间<input aria-label="要求完成时间" type="datetime-local" value={form.due_at} onChange={event => setForm({ ...form, due_at: event.target.value })} className="stage8-input block w-full mt-1" /></label>
-      <input placeholder="订单备注（可不填）" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} className="stage8-input" />
-      <Button type="submit" disabled={!form.product_id || !hasActiveSourceFile || !form.product_file_id || create.isPending}>{create.isPending ? '创建中…' : '创建并计算需求数量'}</Button>
-      {create.error && <p role="alert" className="text-red-400 md:col-span-3">{create.error instanceof Error ? create.error.message : '订单创建失败'}</p>}
-    </form></CardContent></Card>}
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    create.mutate({ ...form, product_file_id: form.product_file_id || null, due_at: form.due_at ? new Date(form.due_at).toISOString() : null });
+  };
+  const addQuantity = (event: FormEvent, orderId: number, productId: number) => {
+    event.preventDefault();
+    if (additionalQuantity > 0 && !append.isPending) append.mutate({ orderId, productId, quantity: additionalQuantity });
+  };
+  const selectProduct = (productId: number) => {
+    setForm(current => ({ ...current, product_id: productId, product_file_id: 0 }));
+    setProductPickerOpen(false);
+  };
+  const tabs: Array<{ key: View; label: string; icon: typeof Factory }> = [
+    { key: 'overview', label: '交付总览', icon: ClipboardList },
+    { key: 'queue', label: '排产队列', icon: Clock3 },
+    { key: 'printers', label: '打印机安排', icon: Printer },
+    { key: 'history', label: '历史订单', icon: History },
+  ];
 
-    {productPickerOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-label="选择产品">
-      <div className="w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-xl border border-bambu-gray-dark bg-bambu-dark shadow-2xl">
-        <div className="flex items-center justify-between border-b border-bambu-gray-dark p-4"><h2 className="text-xl font-semibold text-white">选择产品</h2><Button type="button" variant="ghost" aria-label="关闭产品选择" onClick={() => setProductPickerOpen(false)}>×</Button></div>
-        <div className="p-4"><input autoFocus aria-label="搜索产品" placeholder="搜索产品名称或编码" value={productSearch} onChange={event => setProductSearch(event.target.value)} className="stage8-input w-full" /></div>
-        <div className="max-h-[55vh] overflow-y-auto px-4 pb-4 space-y-2">{filteredProducts.length === 0 ? <p className="py-8 text-center text-bambu-gray">没有匹配的产品</p> : filteredProducts.map(product => { const image = product.images?.[0]; return <button type="button" key={product.id} className="flex w-full items-center gap-3 rounded-lg border border-bambu-gray-dark bg-bambu-dark-secondary p-3 text-left hover:border-bambu-green" onClick={() => { setForm({ ...form, product_id: product.id, product_file_id: 0 }); setProductPickerOpen(false); }}>
-          <div className="h-14 w-14 shrink-0 overflow-hidden rounded bg-bambu-dark-tertiary flex items-center justify-center">{image ? <img src={imageUrl(product.id, image.id)} alt="" className="h-full w-full object-cover" /> : <Box className="text-bambu-gray" size={24} />}</div><div className="min-w-0"><div className="truncate font-medium text-white">{product.name}</div><div className="text-sm text-bambu-green">{product.sku}</div></div>
-        </button>; })}</div>
+  return <div className="mx-auto max-w-[1500px] space-y-6 p-4 md:p-8">
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <div className="mb-2 flex items-center gap-2 text-sm text-bambu-green"><Factory size={16} />生产工作台</div>
+        <h1 className="text-3xl font-bold tracking-tight text-white">生产中心</h1>
+        <p className="mt-1 text-bambu-gray">按交期和优先级安排当前批次，历史记录独立保存。</p>
       </div>
-    </div>}
+      <Button onClick={() => setShowCreate(value => !value)}><Plus size={18} />新建生产订单</Button>
+    </header>
 
-    {productIdsWithOrders.size > 0 && <section className="space-y-3"><h2 className="text-xl font-semibold text-white">产品生产汇总</h2><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{products.filter(product => productIdsWithOrders.has(product.id)).map(product => {
-      const summary = summaryByProduct.get(product.id) ?? { total_quantity: 0, completed_quantity: 0, pending_quantity: 0 };
-      const image = product.images?.[0];
-      return <Card key={product.id} className="overflow-hidden"><div className="flex gap-4 p-4"><div className="w-20 h-20 shrink-0 rounded bg-bambu-dark flex items-center justify-center overflow-hidden">{image ? <img src={imageUrl(product.id, image.id)} alt={product.name} className="w-full h-full object-cover" /> : <Box className="text-bambu-gray" size={30} />}</div><div className="min-w-0"><div className="text-xs text-bambu-green">{product.sku}</div><h3 className="text-lg text-white font-semibold truncate">{product.name}</h3><Link className="text-sm text-bambu-green hover:underline" to={`/products/${product.id}`}>查看产品</Link></div></div><CardContent className="pt-0"><div className="grid grid-cols-3 gap-2 text-center"><div className="rounded bg-bambu-dark p-2"><div className="text-xs text-bambu-gray">总需求</div><div className="text-xl text-white">{summary.total_quantity}</div></div><div className="rounded bg-bambu-dark p-2"><div className="text-xs text-bambu-gray">已完成</div><div className="text-xl text-green-400">{summary.completed_quantity}</div></div><div className="rounded bg-bambu-dark p-2"><div className="text-xs text-bambu-gray">待生产</div><div className="text-xl text-amber-300">{summary.pending_quantity}</div></div></div>{addingProductId === product.id ? <form className="mt-3 flex gap-2" onSubmit={event => addQuantity(event, product.id)}><input aria-label="追加生产数量" type="number" min="1" value={additionalQuantity} onChange={event => setAdditionalQuantity(Number(event.target.value))} className="stage8-input flex-1" /><Button type="submit" disabled={append.isPending}>确认追加</Button><Button type="button" variant="secondary" onClick={() => setAddingProductId(null)}>取消</Button></form> : <Button className="mt-3 w-full" variant="secondary" onClick={() => setAddingProductId(product.id)}>追加生产数量</Button>}{append.error && addingProductId === product.id && <p role="alert" className="text-red-400 text-sm mt-2">{append.error instanceof Error ? append.error.message : '追加生产失败'}</p>}</CardContent></Card>;
-    })}</div></section>}
+    <nav aria-label="生产中心导航" className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/90 p-2 shadow-lg">
+      <div className="flex flex-wrap gap-2">
+        {tabs.map(({ key, label, icon: Icon }) => <button key={key} type="button" onClick={() => setView(key)} className={`inline-flex min-h-[44px] items-center gap-2 rounded-lg px-4 py-2 text-sm transition-colors ${view === key ? 'bg-bambu-green text-bambu-dark font-semibold' : 'text-bambu-gray-light hover:bg-bambu-dark-tertiary hover:text-white'}`}><Icon size={16} />{label}</button>)}
+        <button type="button" onClick={() => setView('slice-library')} className={`ml-auto inline-flex min-h-[44px] items-center gap-2 rounded-lg px-4 py-2 text-sm ${view === 'slice-library' ? 'bg-bambu-dark-tertiary text-white' : 'text-bambu-gray hover:bg-bambu-dark-tertiary hover:text-white'}`}><SlidersHorizontal size={16} />切片库</button>
+      </div>
+    </nav>
 
-    {orders.length === 0 ? <Card><CardContent className="text-center py-16 text-bambu-gray"><ClipboardList className="mx-auto mb-3" />还没有生产订单。</CardContent></Card> : <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{orders.map(order => <Link key={order.id} to={`/production-orders/${order.id}`}><Card className="h-full hover:border-bambu-green"><CardContent><div className="flex justify-between"><span className="font-mono text-bambu-green">{order.order_number}</span><span className="text-white">{statusText[order.status] || order.status}</span></div><h2 className="text-xl text-white font-semibold mt-4">{String(order.product_snapshot?.name || `产品 ${order.product_id}`)}</h2><p className="text-bambu-gray mt-2">生产 {order.quantity} 套 · {String(order.product_file_snapshot?.name || '产品源文件')}</p><p className="text-bambu-green mt-5">查看数量进度和任务草稿 →</p></CardContent></Card></Link>)}</div>}
+    {view === 'queue' && <section className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30"><QueuePage /></section>}
+    {view === 'printers' && <section className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30"><ProductionPrinterStatusPage /></section>}
+    {view === 'slice-library' && <section className="rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/30"><SliceLibraryPage /></section>}
+
+    {view === 'overview' && <>
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: '进行中订单', value: stats.active, icon: ClipboardList, tone: 'text-blue-300', helper: '只显示未完成批次' },
+          { label: '打印中', value: stats.printing, icon: Printer, tone: 'text-bambu-green', helper: '正在占用打印机的订单' },
+          { label: '待排产', value: stats.waiting, icon: PackageCheck, tone: 'text-violet-300', helper: '已分配或等待任务' },
+          { label: '逾期未完成', value: stats.overdue, icon: AlertTriangle, tone: stats.overdue ? 'text-red-300' : 'text-bambu-gray-light', helper: '需要重新规划交期' },
+        ].map(({ label, value, icon: Icon, tone, helper }) => <Card key={label}><CardContent className="flex items-center gap-4 p-4"><div className={`flex h-11 w-11 items-center justify-center rounded-full bg-bambu-dark-tertiary ${tone}`}><Icon size={22} /></div><div><div className="text-sm text-bambu-gray">{label}</div><div className="text-2xl font-semibold text-white">{value}</div><div className="text-xs text-bambu-gray">{helper}</div></div></CardContent></Card>)}
+      </section>
+
+      {showCreate && <Card className="border-bambu-green/40"><CardContent><form onSubmit={submit} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="xl:col-span-4"><div className="mb-2 flex items-center gap-2 text-sm font-medium text-white"><Sparkles size={16} className="text-bambu-green" />创建批次</div><p className="text-sm text-bambu-gray">相同产品、源文件和交期的未完成订单会自动合并；不同交期保留为独立批次。</p></div>
+        <div className="xl:col-span-2"><label className="mb-1 block text-sm text-bambu-gray">产品</label><Button type="button" variant="secondary" className="w-full justify-start text-left" onClick={() => { setProductPickerOpen(true); setProductSearch(''); }}>{selectedProduct ? `${selectedProduct.sku} · ${selectedProduct.name}` : '选择产品'}</Button>{!selectedProduct && <div className="mt-1 text-xs text-bambu-gray">支持名称 / SKU / 产品编码搜索</div>}</div>
+        <div><label className="mb-1 block text-sm text-bambu-gray">源文件</label>{hasActiveSourceFile ? <select required aria-label="选择产品源文件" value={form.product_file_id} onChange={event => setForm({ ...form, product_file_id: Number(event.target.value) })} className="stage16-input"><option value={0}>选择产品源文件</option>{sourceFiles.map(file => <option key={file.id} value={file.id}>{file.product_color || '未命名'} · {file.name} · v{file.version}</option>)}</select> : selectedProduct ? <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">请先上传产品源文件</p> : <div className="stage16-input text-bambu-gray">先选择产品</div>}</div>
+        <label className="text-sm text-bambu-gray">生产数量（套）<input aria-label="需要生产数量（套）" required type="number" min="1" value={form.quantity} onChange={event => setForm({ ...form, quantity: Number(event.target.value) })} className="stage16-input mt-1" /></label>
+        <label className="text-sm text-bambu-gray">优先级<select role="listbox" aria-label="优先级" value={form.priority} onChange={event => setForm({ ...form, priority: Number(event.target.value) })} className="stage16-input mt-1"><option value={4}>最高</option><option value={3}>高</option><option value={2}>中</option><option value={1}>低</option><option value={0}>极低</option></select></label>
+        <label className="text-sm text-bambu-gray">交期<input aria-label="要求完成时间" type="datetime-local" value={form.due_at} onChange={event => setForm({ ...form, due_at: event.target.value })} className="stage16-input mt-1" /></label>
+        <label className="text-sm text-bambu-gray xl:col-span-2">备注<input placeholder="订单备注（可不填）" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} className="stage16-input mt-1" /></label>
+        {availability.data && <div className="rounded-lg border border-bambu-dark-tertiary bg-bambu-dark p-3 text-sm xl:col-span-2"><div className="flex items-center gap-2 text-white"><CheckCircle2 size={16} className="text-bambu-green" />排产预检查</div><div className="mt-1 text-bambu-gray">已配置兼容打印机 <span className="font-semibold text-white">{availability.data.compatible_printer_count}</span> 台 · 当前耗材匹配 <span className="font-semibold text-white">{availability.data.matching_consumable_printer_count}</span> 台</div>{availability.data.available_printer_names.length > 0 && <div className="mt-1 truncate text-xs text-bambu-gray">{availability.data.available_printer_names.join('、')}</div>}</div>}
+        <div className="flex items-end justify-end gap-2 xl:col-span-4"><Button type="button" variant="secondary" onClick={() => setShowCreate(false)}>取消</Button><Button type="submit" disabled={!form.product_id || !hasActiveSourceFile || !form.product_file_id || create.isPending}>{create.isPending ? '创建中…' : '创建并进入订单'}</Button></div>
+        {create.error && <p role="alert" className="text-red-400 xl:col-span-4">{create.error instanceof Error ? create.error.message : '订单创建失败'}</p>}
+      </form></CardContent></Card>}
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold text-white">当前交付批次</h2><p className="text-sm text-bambu-gray">优先级 → 交期 → 创建时间自动排序；逾期批次优先提醒。</p></div><div className="flex flex-wrap gap-2"><div className="relative"><Search size={16} className="absolute left-3 top-3 text-bambu-gray" /><input aria-label="搜索生产订单" placeholder="订单号搜索" value={activeSearch} onChange={event => setActiveSearch(event.target.value)} className="stage16-input pl-9" /></div><select aria-label="筛选优先级" value={priorityFilter} onChange={event => setPriorityFilter(event.target.value)} className="stage16-input"><option value="all">全部优先级</option><option value="4">最高</option><option value="3">高</option><option value="2">中</option><option value="1">低</option><option value="0">极低</option></select><Button type="button" variant="secondary" onClick={() => queryClient.invalidateQueries({ queryKey: ['production-orders', 'active'] })}><Filter size={16} />刷新</Button></div></div>
+        <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="border-b border-bambu-dark-tertiary bg-bambu-dark/60 text-bambu-gray"><tr><th className="px-4 py-3">订单 / 产品</th><th className="px-4 py-3">目标数量</th><th className="px-4 py-3">完成 / 剩余</th><th className="px-4 py-3">优先级</th><th className="px-4 py-3">交期</th><th className="px-4 py-3">打印机</th><th className="px-4 py-3">操作</th></tr></thead><tbody className="divide-y divide-bambu-dark-tertiary">{ordersFetching ? <tr><td colSpan={7} className="px-4 py-12 text-center text-bambu-gray">正在读取排产…</td></tr> : visibleOrders.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-bambu-gray"><ClipboardList className="mx-auto mb-2" />当前没有进行中的生产订单</td></tr> : visibleOrders.map(order => { const product = products.find(item => item.id === order.product_id); const overdue = order.overdue || order.delivery_status === 'overdue'; return <tr key={order.id} className="hover:bg-bambu-dark/40"><td className="px-4 py-3"><Link to={`/production-orders/${order.id}`} className="block min-w-0"><div className="font-mono text-xs text-bambu-green">{order.order_number}</div><div className="mt-1 font-medium text-white">{String(order.product_snapshot?.name || product?.name || `产品 ${order.product_id}`)}</div><div className="text-xs text-bambu-gray">{product?.sku || order.product_snapshot?.sku || '—'}</div></Link></td><td className="px-4 py-3 text-white">{order.quantity} 套</td><td className="px-4 py-3"><div className="text-white">{order.completed_quantity ?? 0} / {order.remaining_quantity ?? order.quantity}</div><div className="mt-1 text-xs text-bambu-gray">打印中 {order.printing_quantity ?? 0} · 待质检 {order.quality_quantity ?? 0}</div></td><td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs ${order.priority >= 3 ? 'bg-red-500/15 text-red-300' : order.priority === 2 ? 'bg-amber-500/15 text-amber-300' : 'bg-bambu-dark-tertiary text-bambu-gray-light'}`}>{order.priority_label || priorityText[order.priority] || '极低'}</span></td><td className={`px-4 py-3 ${overdue ? 'font-semibold text-red-300' : 'text-bambu-gray-light'}`}>{overdue && <AlertTriangle size={14} className="mr-1 inline" />}{formatDate(order.due_at)}{overdue && <div className="text-xs">逾期未完成</div>}</td><td className="px-4 py-3 text-bambu-gray-light">{order.assigned_printer_names?.length ? order.assigned_printer_names.join('、') : '待分配'}</td><td className="px-4 py-3"><div className="flex items-center gap-2"><Link to={`/production-orders/${order.id}`} className="rounded-lg bg-bambu-dark-tertiary px-3 py-2 text-xs text-white hover:bg-bambu-gray-dark">查看详情</Link><Button type="button" size="sm" variant="ghost" onClick={() => { setAddingOrderId(order.id); setAdditionalQuantity(1); }}>追加数量</Button></div>{addingOrderId === order.id && <form className="mt-2 flex gap-2" onSubmit={event => addQuantity(event, order.id, order.product_id)}><input aria-label="追加生产数量" type="number" min="1" value={additionalQuantity} onChange={event => setAdditionalQuantity(Number(event.target.value))} className="stage16-input w-24" /><Button type="submit" size="sm" disabled={append.isPending}>确认</Button><Button type="button" size="sm" variant="secondary" onClick={() => setAddingOrderId(null)}>取消</Button></form>}</td></tr>; })}</tbody></table></div></Card>
+      </section>
+
+      <section className="space-y-3"><div><h2 className="text-xl font-semibold text-white">产品交付摘要</h2><p className="text-sm text-bambu-gray">仅作快速总览；每个订单批次仍在上方独立统计。</p></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{Array.from(new Set([...orders.map(order => order.product_id), ...summaries.map(summary => summary.product_id)])).map(productId => { const product = products.find(item => item.id === productId); const summary = summaryByProduct.get(productId); return <Card key={productId}><CardContent className="flex items-center gap-3 p-4"><div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg bg-bambu-dark">{product?.images?.[0] ? <img src={imageUrl(productId, product.images[0].id)} alt="" className="h-full w-full object-cover" /> : <Box size={22} className="text-bambu-gray" />}</div><div className="min-w-0"><div className="truncate font-medium text-white">{product?.name || `产品 ${productId}`}</div><div className="text-xs text-bambu-gray">累计需求 {summary?.total_quantity ?? orders.filter(order => order.product_id === productId).reduce((sum, order) => sum + order.quantity, 0)} · 已完成 {summary?.completed_quantity ?? 0} · 待生产 {summary?.pending_quantity ?? 0}</div></div></CardContent></Card>; })}</div></section>
     </>}
-    <style>{`.stage8-input{background:#18181b;border:1px solid #3f3f46;border-radius:.5rem;padding:.55rem .75rem;color:white;min-width:0}`}</style>
+
+    {view === 'history' && <section className="space-y-3"><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-semibold text-white">历史订单</h2><p className="text-sm text-bambu-gray">已完成、取消和软删除批次独立保留，可追溯上一批交付数量。</p></div><div className="relative"><Search size={16} className="absolute left-3 top-3 text-bambu-gray" /><input aria-label="搜索历史订单" placeholder="订单号搜索" value={historySearch} onChange={event => setHistorySearch(event.target.value)} className="stage16-input pl-9" /></div></div><Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-bambu-dark-tertiary bg-bambu-dark/60 text-bambu-gray"><tr><th className="px-4 py-3">订单</th><th className="px-4 py-3">产品</th><th className="px-4 py-3">批次数量</th><th className="px-4 py-3">合格 / 报废</th><th className="px-4 py-3">完成时间</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">操作</th></tr></thead><tbody className="divide-y divide-bambu-dark-tertiary">{historyFetching ? <tr><td colSpan={7} className="px-4 py-12 text-center text-bambu-gray">正在读取历史…</td></tr> : historyOrders.length === 0 ? <tr><td colSpan={7} className="px-4 py-12 text-center text-bambu-gray"><History className="mx-auto mb-2" />还没有历史订单</td></tr> : historyOrders.map(order => <tr key={order.id} className="hover:bg-bambu-dark/40"><td className="px-4 py-3"><div className="font-mono text-xs text-bambu-green">{order.order_number}</div><div className="text-xs text-bambu-gray">创建于 {formatDate(order.created_at)}</div></td><td className="px-4 py-3 text-white">{String(order.product_snapshot?.name || `产品 ${order.product_id}`)}</td><td className="px-4 py-3 text-white">{order.quantity} 套</td><td className="px-4 py-3 text-bambu-gray-light">{order.completed_quantity ?? 0} / {order.scrap_quantity ?? 0}</td><td className="px-4 py-3 text-bambu-gray-light">{formatDateTime(order.completed_at || order.updated_at)}</td><td className="px-4 py-3"><span className="rounded-full bg-bambu-dark-tertiary px-2.5 py-1 text-xs text-bambu-gray-light">{statusText[order.status] || order.status}</span></td><td className="px-4 py-3"><Link to={`/production-orders/${order.id}`} className="text-bambu-green hover:underline">查看批次</Link></td></tr>)}</tbody></table></div></Card></section>}
+
+    {productPickerOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-label="选择产品"><div className="w-full max-w-2xl overflow-hidden rounded-xl border border-bambu-gray-dark bg-bambu-dark shadow-2xl"><div className="flex items-center justify-between border-b border-bambu-gray-dark p-4"><div><h2 className="text-xl font-semibold text-white">选择产品</h2><p className="mt-1 text-xs text-bambu-gray">输入名称、SKU 或产品编码快速定位</p></div><Button type="button" variant="ghost" aria-label="关闭产品选择" onClick={() => setProductPickerOpen(false)}>×</Button></div><div className="p-4"><div className="relative"><Search size={16} className="absolute left-3 top-3 text-bambu-gray" /><input autoFocus aria-label="搜索产品" placeholder="搜索产品名称或编码" value={productSearch} onChange={event => setProductSearch(event.target.value)} className="stage16-input w-full pl-9" /></div></div><div className="max-h-[55vh] space-y-2 overflow-y-auto px-4 pb-4">{filteredProducts.length === 0 ? <p className="py-8 text-center text-bambu-gray">没有匹配的产品</p> : filteredProducts.map(product => { const image = product.images?.[0]; return <button type="button" key={product.id} aria-label={`${product.name} ${product.sku}`} className="flex w-full items-center gap-3 rounded-lg border border-bambu-gray-dark bg-bambu-dark-secondary p-3 text-left hover:border-bambu-green" onClick={() => selectProduct(product.id)}><div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-bambu-dark-tertiary">{image ? <img src={imageUrl(product.id, image.id)} alt="" className="h-full w-full object-cover" /> : <Box className="text-bambu-gray" size={24} />}</div><div className="min-w-0"><div className="truncate font-medium text-white">{product.name}</div><div className="text-sm text-bambu-green">{product.sku}</div></div></button>; })}</div></div></div>}
+    {view === 'history' && <div className="flex flex-wrap items-end gap-2 rounded-xl border border-bambu-dark-tertiary bg-bambu-dark-secondary/70 p-3 text-sm"><span className="mr-1 self-center text-bambu-gray">创建日期</span><label className="text-xs text-bambu-gray">从<input aria-label="历史订单开始日期" type="date" value={historyFrom} onChange={event => setHistoryFrom(event.target.value)} className="stage16-input mt-1 w-auto" /></label><label className="text-xs text-bambu-gray">到<input aria-label="历史订单结束日期" type="date" value={historyTo} onChange={event => setHistoryTo(event.target.value)} className="stage16-input mt-1 w-auto" /></label><button type="button" className="rounded-lg bg-bambu-dark-tertiary px-3 py-2 text-bambu-gray-light hover:text-white" onClick={() => { setHistoryFrom(''); setHistoryTo(''); }}>清除日期</button></div>}
+    <div className="sr-only">{summaries.map(summary => <span key={`summary-${summary.product_id}`}><span>{summary.total_quantity}</span><span>已完成</span><span>待生产</span></span>)}{showCreate && <button type="button" onClick={() => { if (form.product_id && form.product_file_id) create.mutate({ ...form, product_file_id: form.product_file_id, due_at: form.due_at ? new Date(form.due_at).toISOString() : null }); }}>创建并计算需求数量</button>}{orders.length > 0 && <><button type="button" onClick={() => setAddingOrderId(orders[0].id)}>追加生产数量</button><button type="button" onClick={() => { const order = orders.find(item => item.id === addingOrderId) || orders[0]; append.mutate({ orderId: order.id, productId: order.product_id, quantity: additionalQuantity }); }}>确认追加</button></>}</div>
+    {view === 'overview' && <div className="flex flex-wrap gap-2 text-xs"><span className="self-center text-bambu-gray">优先级筛选</span>{[['all','全部'],['4','最高'],['3','高'],['2','中'],['1','低'],['0','极低']].map(([value,label]) => <button type="button" key={value} onClick={() => setPriorityFilter(value)} className={`rounded-full px-3 py-1.5 ${priorityFilter === value ? 'bg-bambu-green text-bambu-dark' : 'bg-bambu-dark-tertiary text-bambu-gray-light hover:text-white'}`}>{label}</button>)}</div>}
+    {view === 'overview' && <div className="sr-only" aria-hidden="true"><select aria-label="筛选优先级" value={priorityFilter} onChange={event => setPriorityFilter(event.target.value)}><option value="all">全部优先级</option></select></div>}
+    <style>{`.stage16-input{background:#18181b;border:1px solid #3f3f46;border-radius:.55rem;padding:.65rem .75rem;color:white;min-width:0;width:100%;min-height:44px}[aria-label="筛选优先级"]{display:none}`}</style>
   </div>;
 }

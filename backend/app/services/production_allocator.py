@@ -86,6 +86,7 @@ async def _allocate(db: AsyncSession, plate_job_ids: Sequence[int] | None, limit
             PlateJob.status == PlateJobStatus.DRAFT.value,
             PlateJob.queue_item_id.is_(None),
             ProductionRequirement.order.has(status=OrderStatus.PLANNED.value),
+            ProductionRequirement.order.has(deleted_at=None),
             ProductionRequirement.order.has(recalculation_required=False),
         )
         .options(selectinload(PlateJob.requirement))

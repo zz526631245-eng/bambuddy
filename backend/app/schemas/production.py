@@ -366,7 +366,7 @@ class ProductionOrderCreate(BaseModel):
     product_id: int
     product_file_id: int | None = None
     quantity: int = Field(ge=1)
-    priority: int = Field(default=0, ge=0)
+    priority: int = Field(default=0, ge=0, le=4)
     due_at: datetime | None = None
     notes: str | None = None
 
@@ -395,6 +395,21 @@ class ProductionOrderResponse(_FromAttributes):
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
+    completed_at: datetime | None = None
+    priority_label: str = "极低"
+    overdue: bool = False
+    delivery_status: str = "on_track"
+    completed_quantity: int = 0
+    printing_quantity: int = 0
+    assigned_quantity: int = 0
+    quality_quantity: int = 0
+    cleanup_quantity: int = 0
+    scrap_quantity: int = 0
+    remaining_quantity: int = 0
+    assigned_printer_names: list[str] = []
+    compatible_printer_count: int = 0
+    matching_consumable_printer_count: int = 0
 
 
 class ProductionRequirementResponse(_FromAttributes):
@@ -472,7 +487,7 @@ class QuantityLedgerResponse(BaseModel):
 
 
 class ProductionOrderUpdate(BaseModel):
-    priority: int | None = Field(default=None, ge=0)
+    priority: int | None = Field(default=None, ge=0, le=4)
     due_at: datetime | None = None
     notes: str | None = None
 
@@ -519,6 +534,35 @@ class PlateJobSliceTimeReview(BaseModel):
     approve: bool
 
     _strip_operation = field_validator("operation_id")(_strip_required)
+
+
+class ProductionOrderQuantityAppend(BaseModel):
+    """Append a quantity to the selected active batch, without creating a new order."""
+
+    operation_id: str = Field(min_length=1, max_length=100)
+    quantity: int = Field(gt=0)
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
+
+
+class ProductionOrderReplan(BaseModel):
+    """Change the deadline/priority while preserving a planning audit entry."""
+
+    operation_id: str = Field(min_length=1, max_length=100)
+    due_at: datetime | None = None
+    priority: int | None = Field(default=None, ge=0, le=4)
+
+    _strip_operation = field_validator("operation_id")(_strip_required)
+
+
+class ProductionOrderAvailabilityResponse(BaseModel):
+    product_id: int
+    product_file_id: int
+    compatible_printer_count: int = 0
+    matching_consumable_printer_count: int = 0
+    available_printer_names: list[str] = []
+    required_materials: list[str] = []
+    required_colors: list[str] = []
 
 
 class RealPrinterDispatchRequest(BaseModel):

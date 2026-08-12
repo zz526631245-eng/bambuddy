@@ -36,6 +36,16 @@ class ProductionOrderError(ValueError):
     pass
 
 
+# The persisted integer values are kept for backward compatibility with the
+# Stage 8 API.  The workbench presents these as an ordered, human-readable
+# five-level scale.
+PRIORITY_LABELS = {4: "最高", 3: "高", 2: "中", 1: "低", 0: "极低"}
+
+
+def priority_label(priority: int) -> str:
+    return PRIORITY_LABELS.get(int(priority), "极低")
+
+
 async def _release_real_printer_plate(db: AsyncSession, job: PlateJob) -> None:
     """Release the shared printer gate after an operator confirms cleanup.
 
@@ -184,7 +194,10 @@ async def product_order_summaries(db: AsyncSession) -> list[dict[str, int]]:
         (
             await db.execute(
                 select(ProductionOrder)
-                .where(ProductionOrder.status != OrderStatus.CANCELLED.value)
+                .where(
+                    ProductionOrder.status != OrderStatus.CANCELLED.value,
+                    ProductionOrder.deleted_at.is_(None),
+                )
                 .options(selectinload(ProductionOrder.requirements))
                 .order_by(ProductionOrder.product_id, ProductionOrder.id)
             )
@@ -215,6 +228,196 @@ async def product_order_summaries(db: AsyncSession) -> list[dict[str, int]]:
         }
         for summary in totals.values()
     ]
+
+
+def _order_metrics(order: ProductionOrder) -> dict:
+    """Build authoritative progress numbers for list/detail responses.
+
+    All quantity arithmetic is intentionally kept here in the service layer;
+    the UI receives these values as facts and only formats them.
+    """
+
+    requirements = list(order.requirements or [])
+    completed_by_requirement = [
+        int(requirement.good_quantity / requirement.unit_quantity)
+        for requirement in requirements
+        if requirement.unit_quantity > 0
+    ]
+    completed = min(order.quantity, min(completed_by_requirement)) if completed_by_requirement else 0
+    printing = assigned = quality = cleanup = 0
+    scrap = 0
+    printer_names: set[str] = set()
+    for requirement in requirements:
+        if requirement.unit_quantity > 0:
+            scrap += int(requirement.scrap_quantity / requirement.unit_quantity)
+        for job in requirement.plate_jobs or []:
+            quantity = max(0, int(job.planned_quantity or 0))
+            workflow = job.workflow_status
+            if workflow == PlateJobStatus.PRINTING.value:
+                printing += quantity
+            elif workflow in {PlateJobStatus.ASSIGNED.value, PlateJobStatus.READY.value, PlateJobStatus.DRAFT.value}:
+                assigned += quantity
+            elif workflow == "awaiting_quality":
+                quality += quantity
+            elif workflow == "waiting_cleanup":
+                cleanup += quantity
+            if getattr(job, "queue_item", None) is not None:
+                printer = getattr(job.queue_item, "printer", None)
+                if printer is not None:
+                    printer_names.add(printer.name)
+    remaining = max(0, int(order.quantity) - completed)
+    now = datetime.utcnow()
+    overdue = bool(
+        order.due_at
+        and order.due_at.replace(tzinfo=None) < now
+        and remaining > 0
+        and order.status not in {OrderStatus.COMPLETED.value, OrderStatus.CANCELLED.value}
+        and order.deleted_at is None
+    )
+    if order.deleted_at is not None or order.status == OrderStatus.CANCELLED.value:
+        delivery_status = "cancelled"
+    elif remaining == 0 and order.quantity > 0:
+        delivery_status = "completed"
+    elif overdue:
+        delivery_status = "overdue"
+    else:
+        delivery_status = "on_track"
+    return {
+        "priority_label": priority_label(order.priority),
+        "overdue": overdue,
+        "delivery_status": delivery_status,
+        "completed_quantity": completed,
+        "printing_quantity": min(order.quantity, printing),
+        "assigned_quantity": min(order.quantity, assigned),
+        "quality_quantity": min(order.quantity, quality),
+        "cleanup_quantity": min(order.quantity, cleanup),
+        "scrap_quantity": scrap,
+        "remaining_quantity": remaining,
+        "assigned_printer_names": sorted(printer_names),
+    }
+
+
+def _order_response_dict(order: ProductionOrder) -> dict:
+    result = {
+        "id": order.id,
+        "order_number": order.order_number,
+        "product_id": order.product_id,
+        "quantity": order.quantity,
+        "priority": order.priority,
+        "status": order.status,
+        "due_at": order.due_at,
+        "notes": order.notes,
+        "recalculation_required": order.recalculation_required,
+        "product_snapshot": order.product_snapshot,
+        "bom_snapshot": order.bom_snapshot,
+        "recipe_snapshot": order.recipe_snapshot,
+        "product_file_snapshot": order.product_file_snapshot,
+        "created_by_id": order.created_by_id,
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+        "deleted_at": order.deleted_at,
+        "completed_at": order.completed_at,
+    }
+    result.update(_order_metrics(order))
+    return result
+
+
+async def list_production_orders(
+    db: AsyncSession,
+    *,
+    history: bool = False,
+    search: str | None = None,
+    from_date=None,
+    to_date=None,
+) -> list[dict]:
+    """Return either the active workbench or an isolated historical ledger."""
+
+    query = (
+        select(ProductionOrder)
+        .options(
+            selectinload(ProductionOrder.requirements)
+            .selectinload(ProductionRequirement.plate_jobs)
+            .selectinload(PlateJob.queue_item)
+            .selectinload(PrintQueueItem.printer),
+        )
+    )
+    if history:
+        query = query.where(
+            (ProductionOrder.status.in_((OrderStatus.COMPLETED.value, OrderStatus.CANCELLED.value)))
+            | ProductionOrder.deleted_at.is_not(None)
+        )
+    else:
+        query = query.where(
+            ProductionOrder.deleted_at.is_(None),
+            ProductionOrder.status.not_in((OrderStatus.COMPLETED.value, OrderStatus.CANCELLED.value)),
+        )
+    if from_date is not None:
+        query = query.where(ProductionOrder.created_at >= from_date)
+    if to_date is not None:
+        query = query.where(ProductionOrder.created_at < to_date)
+    orders = list((await db.execute(query)).scalars().unique())
+    rows = [_order_response_dict(order) for order in orders]
+    if search:
+        keyword = search.strip().casefold()
+        rows = [
+            row
+            for row in rows
+            if keyword in str(row["order_number"]).casefold()
+            or keyword in str(row["product_id"]).casefold()
+            or keyword in str((row.get("product_snapshot") or {}).get("name", "")).casefold()
+            or keyword in str((row.get("product_snapshot") or {}).get("sku", "")).casefold()
+        ]
+    if history:
+        rows.sort(key=lambda row: row["completed_at"] or row["updated_at"] or row["created_at"], reverse=True)
+    else:
+        rows.sort(
+            key=lambda row: (
+                not row["overdue"],
+                -int(row["priority"]),
+                row["due_at"] is None,
+                row["due_at"] or datetime.max,
+                row["created_at"] or datetime.max,
+            )
+        )
+    return rows
+
+
+async def order_availability(db: AsyncSession, *, product_id: int, product_file_id: int) -> dict:
+    """Return a quick compatibility summary for the order form.
+
+    Detailed geometry and loaded-filament matching remains in the allocator;
+    this endpoint only previews configured active profiles and current printer
+    rows so operators can spot an impossible order before submitting it.
+    """
+
+    product_file = await db.get(ProductFile, product_file_id)
+    if product_file is None or product_file.product_id != product_id:
+        raise ProductionOrderError("产品源文件不存在")
+    requirements = product_file.filament_requirements or []
+    materials = sorted({str(item.get("material") or item.get("type") or "").upper() for item in requirements if item.get("material") or item.get("type")})
+    colors = sorted({str(item.get("color_name") or item.get("color") or "") for item in requirements if item.get("color_name") or item.get("color")})
+    profiles = list(
+        (
+            await db.execute(
+                select(PrinterProfile).where(
+                    PrinterProfile.is_active.is_(True),
+                    PrinterProfile.auto_production_enabled.is_(True),
+                )
+            )
+        ).scalars()
+    )
+    compatible = [profile for profile in profiles if not profile.supported_materials or any(not materials or material in {str(v).upper() for v in profile.supported_materials} for material in materials)]
+    printers = list((await db.execute(select(Printer).where(Printer.is_active.is_(True)))).scalars())
+    names = sorted({printer.name for printer in printers if any(profile.printer_model == printer.model for profile in compatible)})
+    return {
+        "product_id": product_id,
+        "product_file_id": product_file_id,
+        "compatible_printer_count": len(names),
+        "matching_consumable_printer_count": len(names),
+        "available_printer_names": names,
+        "required_materials": materials,
+        "required_colors": colors,
+    }
 
 
 async def _create_product_file_order(
@@ -312,11 +515,13 @@ async def create_order(
 ) -> tuple[ProductionOrder, bool]:
     replay = await _operation(db, operation_id)
     if replay:
-        if replay.operation_type != "production_order_created":
+        if replay.operation_type not in {"production_order_created", "production_order_merged"}:
             raise ProductionOrderError("该操作编号已经用于其他操作")
         order = await _load_order(db, int((replay.payload or {})["order_id"]))
         if not order:
             raise ProductionOrderError("重复操作记录指向的订单不存在")
+        if replay.operation_type == "production_order_merged":
+            order.__dict__["_merged"] = True
         return order, True
 
     product = (
@@ -340,6 +545,66 @@ async def create_order(
         raise ProductionOrderError("指定的产品源文件不存在或已停用")
     if selected_file is None:
         raise ProductionOrderError("请先上传产品源文件，产品尚未配置可生产的源文件")
+
+    # A repeated active batch is one ledger row, not a second order.  Matching
+    # the frozen source-file snapshot also protects against accidentally
+    # merging a later product-file version or a different filament/color set.
+    source_files = [
+        item
+        for item in product.product_files
+        if item.is_active and item.source_set_id == selected_file.source_set_id
+    ] if product.production_mode == "multi_plate" and selected_file.source_set_id else [selected_file]
+    incoming_snapshot = _product_file_snapshot(selected_file, product=product, source_files=source_files)
+    active_orders = list(
+        (
+            await db.execute(
+                select(ProductionOrder)
+                .where(
+                    ProductionOrder.product_id == product.id,
+                    ProductionOrder.deleted_at.is_(None),
+                    ProductionOrder.status.not_in((OrderStatus.COMPLETED.value, OrderStatus.CANCELLED.value)),
+                    ProductionOrder.due_at.is_not(None),
+                    ProductionOrder.due_at == due_at,
+                )
+                .options(selectinload(ProductionOrder.requirements))
+                .order_by(ProductionOrder.created_at, ProductionOrder.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for existing in active_orders:
+        if existing.product_file_snapshot == incoming_snapshot:
+            existing.quantity += quantity
+            existing.priority = max(existing.priority, priority)
+            for requirement in existing.requirements:
+                requirement.required_quantity += quantity
+            db.add(
+                OperationLog(
+                    operation_id=operation_id,
+                    operation_type="production_order_merged",
+                    entity_type="production_order",
+                    entity_id=existing.id,
+                    actor_user_id=actor_user_id,
+                    payload={"order_id": existing.id, "quantity": quantity, "merged_into": existing.order_number},
+                )
+            )
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                replay = await _operation(db, operation_id)
+                if replay:
+                    loaded = await _load_order(db, existing.id)
+                    if loaded:
+                        loaded.__dict__["_merged"] = True
+                        return loaded, True
+                raise
+            loaded = await _load_order(db, existing.id)
+            assert loaded is not None
+            loaded.__dict__["_merged"] = True
+            return loaded, False
     return await _create_product_file_order(db, product, selected_file, operation_id, order_number, quantity, priority, due_at, notes, actor_user_id)
 
 async def update_order(
@@ -354,6 +619,8 @@ async def update_order(
     order = await db.get(ProductionOrder, order_id)
     if not order:
         raise ProductionOrderError("生产订单不存在")
+    if order.deleted_at is not None:
+        raise ProductionOrderError("已删除的生产订单不能修改")
     fields = set(provided_fields)
     if "priority" in fields:
         order.priority = priority  # type: ignore[assignment]
@@ -364,6 +631,88 @@ async def update_order(
     await db.commit()
     await db.refresh(order)
     return order
+
+
+async def append_order_quantity(
+    db: AsyncSession,
+    order_id: int,
+    *,
+    operation_id: str,
+    quantity: int,
+    actor_user_id: int | None,
+) -> tuple[ProductionOrder, bool]:
+    replay = await _operation(db, operation_id)
+    if replay:
+        if replay.operation_type != "production_order_quantity_added" or replay.entity_id != order_id:
+            raise ProductionOrderError("该操作编号已经用于其他操作")
+        order = await _load_order(db, order_id)
+        if order is None:
+            raise ProductionOrderError("生产订单不存在")
+        return order, True
+    order = await _load_order_for_update(db, order_id)
+    if order is None:
+        raise ProductionOrderError("生产订单不存在")
+    if order.deleted_at is not None or order.status in {OrderStatus.CANCELLED.value, OrderStatus.COMPLETED.value}:
+        raise ProductionOrderError("已归档的生产订单不能追加数量")
+    order.quantity += quantity
+    for requirement in order.requirements:
+        requirement.required_quantity += quantity
+    db.add(
+        OperationLog(
+            operation_id=operation_id,
+            operation_type="production_order_quantity_added",
+            entity_type="production_order",
+            entity_id=order.id,
+            actor_user_id=actor_user_id,
+            payload={"order_id": order.id, "quantity": quantity},
+        )
+    )
+    await db.commit()
+    loaded = await _load_order(db, order.id)
+    assert loaded is not None
+    return loaded, False
+
+
+async def replan_order(
+    db: AsyncSession,
+    order_id: int,
+    *,
+    operation_id: str,
+    due_at: datetime | None,
+    priority: int | None,
+    actor_user_id: int | None,
+) -> tuple[ProductionOrder, bool]:
+    replay = await _operation(db, operation_id)
+    if replay:
+        if replay.operation_type != "production_order_replanned" or replay.entity_id != order_id:
+            raise ProductionOrderError("该操作编号已经用于其他操作")
+        order = await _load_order(db, order_id)
+        if order is None:
+            raise ProductionOrderError("生产订单不存在")
+        return order, True
+    order = await _load_order_for_update(db, order_id)
+    if order is None:
+        raise ProductionOrderError("生产订单不存在")
+    if order.deleted_at is not None or order.status in {OrderStatus.CANCELLED.value, OrderStatus.COMPLETED.value}:
+        raise ProductionOrderError("已归档的生产订单不能重新排期")
+    old_due_at, old_priority = order.due_at, order.priority
+    order.due_at = due_at
+    if priority is not None:
+        order.priority = priority
+    db.add(
+        OperationLog(
+            operation_id=operation_id,
+            operation_type="production_order_replanned",
+            entity_type="production_order",
+            entity_id=order.id,
+            actor_user_id=actor_user_id,
+            payload={"order_id": order.id, "old_due_at": _iso(old_due_at), "due_at": _iso(due_at), "old_priority": old_priority, "priority": order.priority},
+        )
+    )
+    await db.commit()
+    loaded = await _load_order(db, order.id)
+    assert loaded is not None
+    return loaded, False
 
 
 _ACTION_TARGET = {"pause": "paused", "resume": "planned", "cancel": "cancelled"}
@@ -396,6 +745,8 @@ async def change_order_status(
     order = await _load_order(db, order_id)
     if not order:
         raise ProductionOrderError("生产订单不存在")
+    if order.deleted_at is not None:
+        raise ProductionOrderError("已删除的生产订单不能执行订单操作")
     try:
         order.status = transition_order_status(order.status, target)
     except ValueError as exc:
@@ -522,25 +873,48 @@ async def delete_plate_job(db: AsyncSession, plate_job_id: int) -> None:
 
 
 async def delete_order(db: AsyncSession, order_id: int) -> None:
-    """Delete one production order and its production-only task history."""
+    """Remove an order from the active board without erasing print audit rows.
+
+    An order with no started/completed job is physically deleted.  Once a
+    printer has started, the order is soft-deleted/cancelled so consumption,
+    quality and cleanup history remains queryable.  This endpoint never sends
+    a printer stop command.
+    """
     order = await _load_order(db, order_id)
     if order is None:
         raise ProductionOrderError("生产订单不存在")
-    if any(
-        job.print_started_at is not None or job.status == PlateJobStatus.COMPLETED.value
-        for requirement in order.requirements
-        for job in requirement.plate_jobs
-    ):
-        raise ProductionOrderError("订单已有执行记录，必须保留审计历史，不能删除")
     queue_ids = [job.queue_item_id for req in order.requirements for job in req.plate_jobs if job.queue_item_id]
     if queue_ids:
         queue_rows = list((await db.execute(select(PrintQueueItem).where(PrintQueueItem.id.in_(queue_ids)))).scalars())
-        if any(row.status == "printing" for row in queue_rows):
-            raise ProductionOrderError("订单中仍有打印机正在执行的任务，请先取消打印")
         for row in queue_rows:
             if row.status == "pending":
                 row.status = "cancelled"
                 row.completed_at = datetime.utcnow()
+    started = any(
+        job.print_started_at is not None
+        or job.status in {PlateJobStatus.PRINTING.value, PlateJobStatus.WAITING_CLEANUP.value, PlateJobStatus.COMPLETED.value}
+        for requirement in order.requirements
+        for job in requirement.plate_jobs
+    )
+    if started:
+        order.deleted_at = datetime.utcnow()
+        order.status = OrderStatus.CANCELLED.value
+        for requirement in order.requirements:
+            requirement.status = RequirementStatus.CANCELLED.value
+            for job in requirement.plate_jobs:
+                if job.status not in {PlateJobStatus.PRINTING.value, PlateJobStatus.WAITING_CLEANUP.value, PlateJobStatus.COMPLETED.value}:
+                    job.status = PlateJobStatus.CANCELLED.value
+        db.add(
+            OperationLog(
+                operation_id=f"delete-production-order-{order.id}-{datetime.utcnow().timestamp()}",
+                operation_type="production_order_deleted",
+                entity_type="production_order",
+                entity_id=order.id,
+                payload={"order_id": order.id, "soft_deleted": True},
+            )
+        )
+        await db.commit()
+        return
     await db.execute(
         sql_delete(OperationLog).where(
             OperationLog.entity_type == "production_order",
@@ -582,6 +956,7 @@ async def _refresh_order_completion(db: AsyncSession, order_id: int) -> None:
     )
     if not active:
         order.status = OrderStatus.COMPLETED.value
+        order.completed_at = datetime.utcnow()
 
 
 async def advance_virtual_plate_job(
@@ -798,7 +1173,7 @@ async def preview_plate_jobs(db: AsyncSession, order_id: int) -> tuple[Productio
     order = await _load_order(db, order_id)
     if not order:
         raise ProductionOrderError("生产订单不存在")
-    if order.status != OrderStatus.PLANNED.value:
+    if order.deleted_at is not None or order.status != OrderStatus.PLANNED.value:
         raise ProductionOrderError("只有进行中的订单可以生成打印任务草稿")
     items: list[dict] = []
     for requirement in order.requirements:
@@ -847,7 +1222,7 @@ async def confirm_plate_jobs(
     order = await _load_order_for_update(db, order_id)
     if not order:
         raise ProductionOrderError("生产订单不存在")
-    if order.status != OrderStatus.PLANNED.value:
+    if order.deleted_at is not None or order.status != OrderStatus.PLANNED.value:
         raise ProductionOrderError("只有进行中的订单可以确认打印任务草稿")
     requirements = {requirement.id: requirement for requirement in order.requirements}
     jobs: list[PlateJob] = []
@@ -1030,23 +1405,6 @@ async def order_detail(db: AsyncSession, order_id: int) -> dict:
                 ],
             }
         )
-    return {
-        "id": order.id,
-        "order_number": order.order_number,
-        "product_id": order.product_id,
-        "quantity": order.quantity,
-        "priority": order.priority,
-        "status": order.status,
-        "due_at": order.due_at,
-        "notes": order.notes,
-        "recalculation_required": order.recalculation_required,
-        "product_snapshot": order.product_snapshot,
-        "bom_snapshot": order.bom_snapshot,
-        "recipe_snapshot": order.recipe_snapshot,
-        "product_file_snapshot": order.product_file_snapshot,
-        "created_by_id": order.created_by_id,
-        "created_at": order.created_at,
-        "updated_at": order.updated_at,
-        "requirements": requirements,
-        "operations": operations,
-    }
+    result = _order_response_dict(order)
+    result.update({"requirements": requirements, "operations": operations})
+    return result

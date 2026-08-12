@@ -390,6 +390,21 @@ async def ensure_stage15_consumable_cost_tracking(conn):
     )
 
 
+async def ensure_stage16_order_workbench(conn):
+    """Add order-workbench lifecycle fields without recreating production tables."""
+
+    await _safe_execute(conn, "ALTER TABLE production_orders ADD COLUMN deleted_at DATETIME")
+    await _safe_execute(conn, "ALTER TABLE production_orders ADD COLUMN completed_at DATETIME")
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_orders_deleted_at ON production_orders (deleted_at)",
+    )
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_production_orders_completed_at ON production_orders (completed_at)",
+    )
+
+
 async def ensure_stage13_printer_status(conn):
     """Create the normalized printer heartbeat snapshot used by Stage 13.
 
@@ -989,6 +1004,7 @@ async def run_migrations(conn):
     await ensure_stage13_printer_status(conn)
     await ensure_stage14_production_planning(conn)
     await ensure_stage15_consumable_cost_tracking(conn)
+    await ensure_stage16_order_workbench(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show
