@@ -476,6 +476,74 @@ async def test_real_completion_enters_quality_then_allows_manual_accounting(
     assert target["awaiting_plate_clear"] is False
 
 
+async def _assert_real_failure_or_cancellation_skips_success_confirmation_and_waits_for_cleanup(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    queue_status: str,
+):
+    """A failed/cancelled real print is zero-good, then awaits only plate cleanup."""
+    from backend.app.services.printer_manager import printer_manager
+    from backend.app.services.production_real_dispatch import mark_real_job_finished, mark_real_job_started
+
+    printer, _artifact, job, _old_queue = await _real_slice_fixture(db_session, tmp_path)
+    requirement = await db_session.get(ProductionRequirement, job.requirement_id)
+    assert requirement is not None
+    order_id = requirement.order_id
+    queue = await db_session.get(PrintQueueItem, job.queue_item_id)
+    assert queue is not None
+    queue.status = "printing"
+    job.status = "ready"
+    await db_session.commit()
+
+    assert await mark_real_job_started(db_session, printer.id) == job.id
+    queue.status = queue_status
+    await db_session.commit()
+    assert await mark_real_job_finished(db_session, queue.id, queue_status) == job.id
+    await db_session.refresh(job)
+
+    assert job.workflow_status == "waiting_cleanup"
+    assert job.machine_result == "failed"
+    assert job.quality_good_quantity == 0
+    assert job.quality_scrap_quantity == job.planned_quantity
+    assert job.quality_confirmed_at is not None
+
+    detail = (await async_client.get(f"/api/v1/production/orders/{order_id}")).json()
+    ledger = detail["requirements"][0]["ledger"]
+    assert ledger["good"] == 0
+    assert ledger["reserved"] == 0
+    assert ledger["remaining"] == job.planned_quantity
+
+    printer_manager.set_awaiting_plate_clear(printer.id, True)
+    cleanup = await async_client.post(
+        f"/api/v1/production/plate-jobs/{job.id}/workflow/cleanup",
+        json={"operation_id": f"stage14-{queue_status}-cleanup-{job.id}"},
+    )
+    assert cleanup.status_code == 200, cleanup.text
+    assert cleanup.json()["status"] == "completed"
+    assert not printer_manager.is_awaiting_plate_clear(printer.id)
+
+
+async def test_real_failure_skips_success_confirmation_and_waits_for_cleanup(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+):
+    await _assert_real_failure_or_cancellation_skips_success_confirmation_and_waits_for_cleanup(
+        async_client, db_session, tmp_path, "failed"
+    )
+
+
+async def test_real_cancellation_skips_success_confirmation_and_waits_for_cleanup(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+):
+    await _assert_real_failure_or_cancellation_skips_success_confirmation_and_waits_for_cleanup(
+        async_client, db_session, tmp_path, "cancelled"
+    )
+
+
 async def test_real_printer_is_preferred_over_matching_virtual_test_printer(
     db_session: AsyncSession,
     tmp_path: Path,

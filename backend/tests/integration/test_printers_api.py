@@ -82,6 +82,13 @@ class TestPrintersAPI:
         assert result["serial_number"] == "00M09A111111111"
         assert result["model"] == "X1C"
 
+        profiles = await async_client.get("/api/v1/production/printer-profiles")
+        assert profiles.status_code == 200
+        assert any(
+            profile["printer_model"] == "X1C" and profile["auto_production_enabled"]
+            for profile in profiles.json()
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_create_printer_with_hostname(self, async_client: AsyncClient):
@@ -240,6 +247,35 @@ class TestPrintersAPI:
 
         assert response.status_code == 200
         assert response.json()["is_active"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_printer_maintenance_endpoint_blocks_and_restores_service(
+        self, async_client: AsyncClient, printer_factory
+    ):
+        """The explicit maintenance endpoint toggles the shared service gate."""
+        printer = await printer_factory(is_active=True)
+
+        with patch("backend.app.api.routes.printers.printer_manager.disconnect_printer") as disconnect:
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/maintenance", json={"maintenance": True}
+            )
+
+        assert response.status_code == 200
+        assert response.json()["is_active"] is False
+        disconnect.assert_called_once_with(printer.id)
+
+        with patch(
+            "backend.app.api.routes.printers.printer_manager.connect_printer",
+            new=AsyncMock(),
+        ) as connect:
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/maintenance", json={"maintenance": False}
+            )
+
+        assert response.status_code == 200
+        assert response.json()["is_active"] is True
+        connect.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.integration

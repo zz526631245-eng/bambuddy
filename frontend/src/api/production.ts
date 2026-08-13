@@ -63,7 +63,7 @@ export interface PrinterConsumable {
   source:string; operation_id:string; is_active:boolean; scanned_at:string; replaced_at?:string|null;
 }
 export interface PrinterConsumableTarget {
-  id:number; name:string; kind:'printer'|'virtual_printer'; model?:string|null; loaded_filaments:Array<Record<string,unknown>>; awaiting_plate_clear?:boolean;
+  id:number; name:string; kind:'printer'|'virtual_printer'; model?:string|null; loaded_filaments:Array<Record<string,unknown>>; awaiting_plate_clear?:boolean; is_active?:boolean;
 }
 export interface ConsumableUnit {
   id:number; material_type_id:number; material_type_code:string; material:string; brand?:string|null;
@@ -158,6 +158,7 @@ export const productionApi={
   listConsumables:()=>request<PrinterConsumable[]>('/production/printer-consumables'),
   listConsumableTargets:()=>request<PrinterConsumableTarget[]>('/production/printer-consumables/targets'),
   clearPlate:(printerId:number)=>request<{success:boolean;message:string}>(`/printers/${printerId}/clear-plate`,{method:'POST'}),
+  setPrinterMaintenance:(printerId:number,maintenance:boolean)=>request<{id:number;name:string;is_active:boolean}>(`/printers/${printerId}/maintenance`,{method:'POST',body:JSON.stringify({maintenance})}),
   scanConsumable:(data:{operation_id:string;scan_code:string;material?:string|null;color_hex?:string|null;color_name?:string|null;spool_id?:number|null;consumable_unit_id?:number|null;printer_id?:number|null;virtual_printer_id?:number|null})=>
     request<PrinterConsumable & { replayed:boolean; replaced_id?:number|null }>('/production/printer-consumables/scan',{method:'POST',body:JSON.stringify(data)}),
   listConsumableUnits:(status?:string)=>request<ConsumableUnit[]>('/production/consumable-library?' + (status ? 'status_filter=' + encodeURIComponent(status) + '&' : '') + 'include_pending=false'),

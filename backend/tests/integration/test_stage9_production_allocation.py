@@ -279,6 +279,64 @@ async def test_unmatched_draft_is_recovered_when_a_compatible_printer_appears(
     assert draft.queue_item_id is not None
 
 
+async def test_bound_printer_without_profile_is_repaired_and_allocated(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    printer_factory,
+):
+    """Existing bound printers must not require a manually created profile."""
+
+    printer = await printer_factory(name="Legacy bound X1C", model="X1C", location="LEGACY")
+    product = (
+        await async_client.post(
+            "/api/v1/products",
+            json={"sku": "STAGE9-LEGACY-BOUND", "name": "Legacy bound product"},
+        )
+    ).json()
+    source = await async_client.post(
+        f"/api/v1/products/{product['id']}/files",
+        files={"file": ("legacy-bound.3mf", b"PK\\x03\\x04stage9-source", "application/octet-stream")},
+        data={
+            "strategy": "fixed_plate",
+            "units_per_plate": "1",
+            "component_ids": "[]",
+            "compatible_printer_models": "[]",
+            "filament_requirements": "[]",
+        },
+    )
+    assert source.status_code == 201, source.text
+    order = await async_client.post(
+        "/api/v1/production/orders",
+        json={
+            "operation_id": "stage9-legacy-bound-order",
+            "order_number": "STAGE9-LEGACY-BOUND-ORDER",
+            "product_id": product["id"],
+            "quantity": 1,
+        },
+    )
+    assert order.status_code == 201, order.text
+    preview = await async_client.get(f"/api/v1/production/orders/{order.json()['id']}/plate-jobs/preview")
+    assert preview.status_code == 200, preview.text
+    confirmed = await async_client.post(
+        f"/api/v1/production/orders/{order.json()['id']}/plate-jobs/confirm",
+        json={"operation_id": "stage9-legacy-bound-confirm", "items": preview.json()["items"]},
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    job = confirmed.json()["items"][0]
+    assert job["status"] == "assigned"
+    assert job["queue_item_id"] is not None
+    queue_item = await db_session.get(PrintQueueItem, job["queue_item_id"])
+    assert queue_item is not None
+    assert queue_item.printer_id == printer.id
+
+    profiles = await async_client.get("/api/v1/production/printer-profiles")
+    assert profiles.status_code == 200
+    assert any(
+        profile["printer_model"] == "X1C" and profile["auto_production_enabled"]
+        for profile in profiles.json()
+    )
+
+
 async def test_allocator_falls_back_to_another_frozen_compatible_profile(
     async_client: AsyncClient,
     db_session: AsyncSession,

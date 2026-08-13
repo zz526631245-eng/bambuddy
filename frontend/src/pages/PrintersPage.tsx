@@ -2539,7 +2539,7 @@ function PrinterCard({
   // out of service across every consumer in one place. Used from the
   // overflow menu and EditPrinterModal.
   const maintenanceMutation = useMutation({
-    mutationFn: (isActive: boolean) => api.updatePrinter(printer.id, { is_active: isActive }),
+    mutationFn: (isActive: boolean) => api.setPrinterMaintenance(printer.id, !isActive),
     onSuccess: (_data, isActive) => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });

@@ -20,6 +20,7 @@ from backend.app.models.operation_log import OperationLog
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.production import OrderStatus, PlateJob, PlateJobStatus, ProductionRequirement
 from backend.app.services.production_eligibility import find_assignment
+from backend.app.services.production_printer_profiles import ensure_profiles_for_active_printers
 from backend.app.services.production_printer_status import availability
 from backend.app.services.production_real_dispatch import auto_dispatch_real_slice_job
 from backend.app.services.production_slicer import slice_plate_job_real
@@ -77,6 +78,11 @@ async def _requeue_unavailable_assignments(db: AsyncSession) -> int:
 
 
 async def _allocate(db: AsyncSession, plate_job_ids: Sequence[int] | None, limit: int) -> list[PlateJob]:
+    # Printer rows predate production profiles in older installations, and
+    # newly bound printers are not required to repeat model configuration.
+    # Repair that bridge before looking for draft jobs so both existing and
+    # future real printers participate in normal eligibility checks.
+    await ensure_profiles_for_active_printers(db)
     await _requeue_unavailable_assignments(db)
     query = (
         select(PlateJob)

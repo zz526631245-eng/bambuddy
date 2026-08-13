@@ -270,7 +270,10 @@ async def list_printer_consumable_targets(
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.PLATE_JOBS_READ),
 ):
-    printers = list((await db.execute(select(Printer).where(Printer.is_active.is_(True)).order_by(Printer.id))).scalars())
+    # Include inactive/maintenance printers so the mobile QR flow can locate
+    # a printer and offer the action to leave maintenance mode.  Production
+    # allocation still excludes them through Printer.is_active.
+    printers = list((await db.execute(select(Printer).order_by(Printer.id))).scalars())
     virtuals = list((await db.execute(select(VirtualPrinter).order_by(VirtualPrinter.id))).scalars())
     return [
         {
@@ -279,6 +282,7 @@ async def list_printer_consumable_targets(
             "kind": "printer",
             "model": row.model,
             "loaded_filaments": row.loaded_filaments or [],
+            "is_active": row.is_active,
             "awaiting_plate_clear": bool(
                 row.awaiting_plate_clear or printer_manager.is_awaiting_plate_clear(row.id)
             ),

@@ -1057,6 +1057,108 @@ async def _refresh_order_completion(db: AsyncSession, order_id: int) -> None:
         order.completed_at = datetime.utcnow()
 
 
+async def _record_plate_job_quality(
+    db: AsyncSession,
+    job: PlateJob,
+    *,
+    good_quantity: int,
+    confirmed_at: datetime,
+) -> int:
+    """Persist one plate's quality result and update its requirement ledger.
+
+    Both the manual quality screen and a failed/cancelled real-printer result
+    use this routine.  Keeping the accounting in one place ensures that a
+    zero-good result releases the reserved demand for a replacement run just
+    like an operator recording a failed quality inspection would.
+    """
+    scrap_quantity = job.planned_quantity - good_quantity
+    job.quality_good_quantity = good_quantity
+    job.quality_scrap_quantity = scrap_quantity
+    job.quality_confirmed_at = confirmed_at
+    requirement = job.requirement
+    file_snapshot = (requirement.recipe_snapshot or {}).get("product_file_snapshot") or {}
+    is_multi_plate = (
+        file_snapshot.get("production_mode") == "multi_plate"
+        and int(file_snapshot.get("source_plate_count", 1) or 1) > 1
+        and job.product_set_index > 0
+    )
+    if is_multi_plate:
+        siblings = list(
+            (
+                await db.execute(
+                    select(PlateJob).where(
+                        PlateJob.requirement_id == requirement.id,
+                        PlateJob.product_set_index == job.product_set_index,
+                        PlateJob.status != PlateJobStatus.CANCELLED.value,
+                    )
+                )
+            ).scalars()
+        )
+        if all(row.quality_confirmed_at is not None for row in siblings):
+            requirement.reserved_quantity = max(0, requirement.reserved_quantity - 1)
+            if all((row.quality_good_quantity or 0) >= row.planned_quantity for row in siblings):
+                requirement.good_quantity += 1
+            else:
+                requirement.scrap_quantity += 1
+    else:
+        requirement.reserved_quantity = max(0, requirement.reserved_quantity - job.planned_quantity)
+        requirement.good_quantity += good_quantity
+        requirement.scrap_quantity += scrap_quantity
+    requirement.status = (
+        RequirementStatus.COMPLETED.value
+        if requirement.good_quantity >= requirement.required_quantity
+        else RequirementStatus.IN_PROGRESS.value
+        if requirement.reserved_quantity > 0
+        else RequirementStatus.PENDING.value
+    )
+    return scrap_quantity
+
+
+async def record_failed_real_job_quality(
+    db: AsyncSession,
+    job: PlateJob,
+    *,
+    queue_status: str,
+    operation_id: str,
+) -> bool:
+    """Automatically account for a failed/cancelled real print as zero good.
+
+    The physical plate still needs clearing, so the job remains in
+    ``waiting_cleanup``.  It deliberately bypasses the success-quality step:
+    the order records zero good units, releases its reservation for a retry,
+    and never credits the completed quantity.
+    """
+    if queue_status not in {"failed", "cancelled"}:
+        raise ValueError(f"unsupported failed real-printer queue status: {queue_status}")
+    if job.quality_confirmed_at is not None:
+        return False
+
+    now = datetime.utcnow()
+    scrap_quantity = await _record_plate_job_quality(
+        db,
+        job,
+        good_quantity=0,
+        confirmed_at=now,
+    )
+    db.add(
+        OperationLog(
+            operation_id=operation_id,
+            operation_type="stage14_real_printer_failure_accounted",
+            entity_type="production_order",
+            entity_id=job.requirement.order_id,
+            payload={
+                "plate_job_id": job.id,
+                "queue_item_id": job.queue_item_id,
+                "queue_status": queue_status,
+                "good_quantity": 0,
+                "scrap_quantity": scrap_quantity,
+                "automatic": True,
+            },
+        )
+    )
+    return True
+
+
 async def advance_virtual_plate_job(
     db: AsyncSession,
     *,
@@ -1128,45 +1230,11 @@ async def advance_virtual_plate_job(
             raise ProductionOrderError("当前任务不在等待质检状态")
         if good_quantity is None or good_quantity < 0 or good_quantity > job.planned_quantity:
             raise ProductionOrderError("合格数量必须在零到本盘计划数量之间")
-        scrap_quantity = job.planned_quantity - good_quantity
-        job.quality_good_quantity = good_quantity
-        job.quality_scrap_quantity = scrap_quantity
-        job.quality_confirmed_at = now
-        requirement = job.requirement
-        file_snapshot = (requirement.recipe_snapshot or {}).get("product_file_snapshot") or {}
-        is_multi_plate = (
-            file_snapshot.get("production_mode") == "multi_plate"
-            and int(file_snapshot.get("source_plate_count", 1) or 1) > 1
-            and job.product_set_index > 0
-        )
-        if is_multi_plate:
-            siblings = list(
-                (
-                    await db.execute(
-                        select(PlateJob).where(
-                            PlateJob.requirement_id == requirement.id,
-                            PlateJob.product_set_index == job.product_set_index,
-                            PlateJob.status != PlateJobStatus.CANCELLED.value,
-                        )
-                    )
-                ).scalars()
-            )
-            if all(row.quality_confirmed_at is not None for row in siblings):
-                requirement.reserved_quantity = max(0, requirement.reserved_quantity - 1)
-                if all((row.quality_good_quantity or 0) >= row.planned_quantity for row in siblings):
-                    requirement.good_quantity += 1
-                else:
-                    requirement.scrap_quantity += 1
-        else:
-            requirement.reserved_quantity = max(0, requirement.reserved_quantity - job.planned_quantity)
-            requirement.good_quantity += good_quantity
-            requirement.scrap_quantity += scrap_quantity
-        requirement.status = (
-            RequirementStatus.COMPLETED.value
-            if requirement.good_quantity >= requirement.required_quantity
-            else RequirementStatus.IN_PROGRESS.value
-            if requirement.reserved_quantity > 0
-            else RequirementStatus.PENDING.value
+        scrap_quantity = await _record_plate_job_quality(
+            db,
+            job,
+            good_quantity=good_quantity,
+            confirmed_at=now,
         )
         payload.update({"good_quantity": good_quantity, "scrap_quantity": scrap_quantity})
     elif action == "cleanup":

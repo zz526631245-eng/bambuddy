@@ -78,6 +78,12 @@ class PrinterUpdate(BaseModel):
     loaded_filaments: list[dict] | None = None
 
 
+class PrinterMaintenanceModeUpdate(BaseModel):
+    """Request to enter or leave the printer's out-of-service mode."""
+
+    maintenance: bool
+
+
 class PrinterResponse(PrinterBase):
     id: int
     is_active: bool

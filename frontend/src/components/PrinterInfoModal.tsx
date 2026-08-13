@@ -7,7 +7,7 @@ import { formatDateOnly } from '../utils/date';
 import { getPrinterImage, getWifiStrength } from '../utils/printer';
 import { mobileBaseUrl, isLoopbackPage } from '../utils/mobileUrl';
 import { buildPrinterConsumableQrPayload } from '../utils/printerConsumableQr';
-import type { Printer, PrinterStatus } from '../api/client';
+import { api, type Printer, type PrinterStatus } from '../api/client';
 
 interface PrinterInfoModalProps {
   printer: Printer;
@@ -65,8 +65,9 @@ function CopyButton({ value }: { value: string }) {
 
 export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: PrinterInfoModalProps) {
   const { t } = useTranslation();
+  const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const qrId = `printer-consumable-qr-${printer.id}`;
-  const printerQrPayload = buildPrinterConsumableQrPayload(mobileBaseUrl(), `printer:${printer.id}`);
+  const printerQrPayload = buildPrinterConsumableQrPayload(mobileBaseUrl(externalUrl), `printer:${printer.id}`);
 
   const downloadPrinterQr = () => {
     const svg = document.getElementById(qrId);
@@ -78,6 +79,18 @@ export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: 
     anchor.click();
     URL.revokeObjectURL(url);
   };
+
+  useEffect(() => {
+    let active = true;
+    void api.getSettings()
+      .then(settings => {
+        if (active) setExternalUrl(settings.external_url || null);
+      })
+      .catch(() => {
+        // Keep the page URL fallback when the user cannot read settings.
+      });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

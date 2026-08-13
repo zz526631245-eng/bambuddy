@@ -123,6 +123,7 @@ class PrinterConsumableTarget(_FromAttributes):
     kind: Literal["printer", "virtual_printer"]
     model: str | None
     loaded_filaments: list[dict]
+    is_active: bool = True
     # Shared Bambuddy-side state used by every plate-clear confirmation entry
     # point (printer page, production order and QR scanner).
     awaiting_plate_clear: bool = False

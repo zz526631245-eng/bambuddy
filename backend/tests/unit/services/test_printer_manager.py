@@ -4,6 +4,7 @@ Tests printer connection management, status tracking, and print control.
 """
 
 import logging
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -197,6 +198,36 @@ class TestPrinterManager:
             result = await manager.connect_printer(mock_printer)
 
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_ensure_printer_connected_retries_failed_startup_connection(self, manager, mock_printer):
+        """A failed startup connection is rebuilt by the connection supervisor."""
+        failed_client = MagicMock()
+        failed_client.state.connected = False
+        failed_client.state.state = "unknown"
+        manager._clients[mock_printer.id] = failed_client
+        manager.connect_printer = AsyncMock(return_value=True)
+
+        result = await manager.ensure_printer_connected(mock_printer)
+
+        assert result is True
+        manager.connect_printer.assert_awaited_once_with(mock_printer)
+        assert mock_printer.id not in manager._last_connection_attempt
+
+    @pytest.mark.asyncio
+    async def test_ensure_printer_connected_respects_retry_cooldown(self, manager, mock_printer):
+        """Repeated supervisor passes do not churn an unavailable MQTT client."""
+        failed_client = MagicMock()
+        failed_client.state.connected = False
+        failed_client.state.state = "unknown"
+        manager._clients[mock_printer.id] = failed_client
+        manager._last_connection_attempt[mock_printer.id] = time.monotonic()
+        manager.connect_printer = AsyncMock(return_value=False)
+
+        result = await manager.ensure_printer_connected(mock_printer)
+
+        assert result is False
+        manager.connect_printer.assert_not_awaited()
 
     # ========================================================================
     # Tests for disconnect_printer

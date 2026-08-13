@@ -13,6 +13,7 @@ from backend.app.services.slicer_api import (
     SlicerApiUnavailableError,
     SliceResult,
     SlicerInputError,
+    _is_loopback_sidecar_url,
     _guess_model_content_type,
 )
 
@@ -56,6 +57,14 @@ class TestSlicerApiEndpoint:
     def test_keeps_remote_sidecar_hostname(self):
         service = SlicerApiService("http://bambu-studio-api:3001")
         assert service.base_url == "http://bambu-studio-api:3001"
+
+    def test_loopback_sidecars_bypass_environment_proxy(self):
+        assert _is_loopback_sidecar_url("http://localhost:3001") is True
+        assert _is_loopback_sidecar_url("http://127.0.0.1:3001") is True
+        assert _is_loopback_sidecar_url("http://[::1]:3001") is True
+
+    def test_remote_sidecars_keep_environment_proxy_support(self):
+        assert _is_loopback_sidecar_url("http://slicer.example:3001") is False
 
 
 class TestSliceWithProfiles:

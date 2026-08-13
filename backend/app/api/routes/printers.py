@@ -33,6 +33,7 @@ from backend.app.schemas.printer import (
     NozzleRackSlot,
     PrinterCreate,
     PrinterDiagnosticResult,
+    PrinterMaintenanceModeUpdate,
     PrinterResponse,
     PrinterResponseWithSecret,
     PrinterStatus,
@@ -58,6 +59,7 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
+from backend.app.services.production_printer_profiles import ensure_generic_profile_for_model
 from backend.app.utils.http import build_content_disposition
 
 logger = logging.getLogger(__name__)
@@ -154,8 +156,15 @@ async def create_printer(
             },
         )
 
-    printer = Printer(**printer_data.model_dump())
+    printer_values = printer_data.model_dump()
+    if not printer_values.get("model") and test_result.get("model"):
+        # Some discovery clients omit the model even though the connection
+        # probe has already identified it. Persist the probed model so the
+        # production profile bridge can include this printer in allocation.
+        printer_values["model"] = str(test_result["model"]).strip() or None
+    printer = Printer(**printer_values)
     db.add(printer)
+    await ensure_generic_profile_for_model(db, printer.model)
     await db.commit()
     await db.refresh(printer)
 
@@ -365,11 +374,44 @@ async def update_printer(
     for field, value in update_data.items():
         setattr(printer, field, value)
 
+    if "model" in update_data or "is_active" in update_data:
+        await ensure_generic_profile_for_model(db, printer.model)
     await db.commit()
     await db.refresh(printer)
 
     # Reconnect if connection settings changed
     if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+        printer_manager.disconnect_printer(printer_id)
+        if printer.is_active:
+            await printer_manager.connect_printer(printer)
+
+    return printer
+
+
+@router.post("/{printer_id}/maintenance", response_model=PrinterResponse)
+async def set_printer_maintenance(
+    printer_id: int,
+    payload: PrinterMaintenanceModeUpdate,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    """Put a printer into or take it out of maintenance mode.
+
+    Maintenance is represented by the existing ``is_active`` flag so every
+    queue, scheduler, production-allocation and real-dispatch path applies the
+    same exclusion rule.  Entering maintenance disconnects the printer; it
+    does not send a print-stop command or silently alter production history.
+    """
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+
+    desired_active = not payload.maintenance
+    if printer.is_active != desired_active:
+        printer.is_active = desired_active
+        await db.commit()
+        await db.refresh(printer)
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)

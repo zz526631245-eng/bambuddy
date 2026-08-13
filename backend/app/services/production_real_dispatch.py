@@ -343,7 +343,13 @@ async def mark_real_job_started(db: AsyncSession, printer_id: int) -> int | None
 
 
 async def mark_real_job_finished(db: AsyncSession, queue_item_id: int, queue_status: str) -> int | None:
-    """Move a real production job to quality review after an MQTT completion."""
+    """Synchronise a real production job after its queue item ends.
+
+    Successful prints require an operator's quality confirmation.  Failed or
+    cancelled prints have no possible successful quantity, so they bypass that
+    step, are recorded as zero-good, and wait only for the physical plate to
+    be cleared.
+    """
 
     job = await db.scalar(
         select(PlateJob)
@@ -356,6 +362,16 @@ async def mark_real_job_finished(db: AsyncSession, queue_item_id: int, queue_sta
     job.status = PlateJobStatus.WAITING_CLEANUP.value
     job.machine_result = machine_result
     job.print_finished_at = datetime.utcnow()
+    automatic_quality_recorded = False
+    if queue_status in {"failed", "cancelled"}:
+        from backend.app.services.production_order_service import record_failed_real_job_quality
+
+        automatic_quality_recorded = await record_failed_real_job_quality(
+            db,
+            job,
+            queue_status=queue_status,
+            operation_id=f"stage14-real-auto-quality-queue-{queue_item_id}",
+        )
     db.add(
         OperationLog(
             operation_id=f"stage14-real-finish-queue-{queue_item_id}",
@@ -366,8 +382,56 @@ async def mark_real_job_finished(db: AsyncSession, queue_item_id: int, queue_sta
                 "plate_job_id": job.id,
                 "queue_item_id": queue_item_id,
                 "machine_result": machine_result,
+                "queue_status": queue_status,
+                "automatic_quality_recorded": automatic_quality_recorded,
             },
         )
     )
     await db.commit()
     return job.id
+
+
+async def reconcile_failed_real_jobs(db: AsyncSession) -> int:
+    """Repair interrupted pre-fix failures that were left awaiting quality.
+
+    This is intentionally limited to real-printer jobs whose linked queue row
+    already proves ``failed`` or ``cancelled``.  It is also useful after a
+    process restart between receiving the MQTT completion and committing the
+    production accounting update.
+    """
+    jobs = list(
+        (
+            await db.execute(
+                select(PlateJob)
+                .join(PrintQueueItem, PlateJob.queue_item_id == PrintQueueItem.id)
+                .options(selectinload(PlateJob.requirement))
+                .where(
+                    PlateJob.virtual_printer_id.is_(None),
+                    PlateJob.status == PlateJobStatus.WAITING_CLEANUP.value,
+                    PlateJob.quality_confirmed_at.is_(None),
+                    PrintQueueItem.status.in_(("failed", "cancelled")),
+                )
+            )
+        ).scalars()
+    )
+    if not jobs:
+        return 0
+
+    from backend.app.services.production_order_service import record_failed_real_job_quality
+
+    repaired = 0
+    for job in jobs:
+        queue_item = await db.get(PrintQueueItem, job.queue_item_id)
+        if queue_item is None:
+            continue
+        job.machine_result = "failed"
+        if await record_failed_real_job_quality(
+            db,
+            job,
+            queue_status=queue_item.status,
+            operation_id=f"stage14-real-auto-quality-queue-{queue_item.id}",
+        ):
+            repaired += 1
+    if repaired:
+        await db.commit()
+    return repaired

@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, or_, select, text
@@ -5988,6 +5989,51 @@ def stop_auth_cleanup() -> None:
         logging.getLogger(__name__).info("Auth periodic cleanup stopped")
 
 
+# Printer connections can be created while Windows is still bringing the
+# Wi-Fi adapter, route, and ARP table back after a reboot.  Paho retries an
+# established MQTT session, but an initial connect_async attempt can remain
+# stuck before the first successful handshake.  Keep a small supervisor alive
+# so the application heals that startup race without requiring a Wi-Fi reset.
+_printer_connection_supervisor_task: asyncio.Task | None = None
+_PRINTER_CONNECTION_SUPERVISOR_INTERVAL = 10
+
+
+async def _printer_connection_supervisor_loop() -> None:
+    from backend.app.models.printer import Printer
+
+    while True:
+        try:
+            async with async_session() as db:
+                result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
+                printers = list(result.scalars().all())
+
+            for printer in printers:
+                await printer_manager.ensure_printer_connected(printer)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception("Printer connection supervisor pass failed")
+        await asyncio.sleep(_PRINTER_CONNECTION_SUPERVISOR_INTERVAL)
+
+
+def start_printer_connection_supervisor() -> None:
+    global _printer_connection_supervisor_task
+    if _printer_connection_supervisor_task is None:
+        _printer_connection_supervisor_task = spawn_background_task(
+            _printer_connection_supervisor_loop(),
+            name="printer-connection-supervisor",
+        )
+        logging.getLogger(__name__).info("Printer connection supervisor started")
+
+
+def stop_printer_connection_supervisor() -> None:
+    global _printer_connection_supervisor_task
+    if _printer_connection_supervisor_task:
+        _printer_connection_supervisor_task.cancel()
+        _printer_connection_supervisor_task = None
+        logging.getLogger(__name__).info("Printer connection supervisor stopped")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -6033,6 +6079,20 @@ async def lifespan(app: FastAPI):
                 logging.info("Fixed %d queue item(s) with invalid 'aborted' status → 'cancelled'", len(aborted_items))
     except Exception as e:
         logging.warning("Failed to fix aborted queue items: %s", e)
+
+    # Failed/cancelled real-printer jobs still need physical plate cleanup,
+    # but must never be presented as a successful print awaiting quality.
+    # Reconcile any completion that occurred before the automatic zero-good
+    # accounting path was available (or during an interrupted process stop).
+    try:
+        async with async_session() as db:
+            from backend.app.services.production_real_dispatch import reconcile_failed_real_jobs
+
+            repaired = await reconcile_failed_real_jobs(db)
+            if repaired:
+                logging.info("Reconciled %d failed/cancelled real production job(s) to waiting cleanup", repaired)
+    except Exception as e:
+        logging.warning("Failed to reconcile real production failure accounting: %s", e)
 
     # Restore debug logging state from previous session
     await init_debug_logging()
@@ -6191,6 +6251,7 @@ async def lifespan(app: FastAPI):
     # Connect to all active printers
     async with async_session() as db:
         await init_printer_connections(db)
+    start_printer_connection_supervisor()
 
     # Auto-connect to Spoolman if enabled
     async with async_session() as db:
@@ -6323,6 +6384,7 @@ async def lifespan(app: FastAPI):
         logging.warning("Failed to shut down camera broadcasters: %s", e)
     stop_expected_prints_cleanup()
     stop_auth_cleanup()
+    stop_printer_connection_supervisor()
     printer_manager.disconnect_all()
     await close_spoolman_client()
 
@@ -6760,6 +6822,25 @@ async def trace_id_middleware(request, call_next):
 
     response.headers["X-Trace-Id"] = trace_id
     return response
+
+
+# The Android companion is a Capacitor WebView, not a page served by this
+# origin.  Its API calls therefore need an explicit, narrowly scoped CORS
+# policy.  Keep this middleware outermost so it can answer the WebView's
+# OPTIONS preflight before auth middleware sees the request.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=(
+        "http://localhost",
+        "https://localhost",
+        "capacitor://localhost",
+        "ionic://localhost",
+    ),
+    allow_origin_regex=r"^https?://localhost(?::\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # API routes

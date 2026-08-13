@@ -56,7 +56,7 @@ function SliceJobRow({
     <div className="text-sm text-bambu-gray space-y-1">
       <div>{isRealAssigned ? `真实打印机：${job.assigned_printer_name || `#${job.assigned_printer_id}`}` : job.virtual_printer_name ? `虚拟打印机：${job.virtual_printer_name}` : job.virtual_printer_id ? `虚拟打印机 #${job.virtual_printer_id}` : '尚未分配打印机'} · {job.assigned_printer_model || job.printer_model ? `型号 ${job.assigned_printer_model || job.printer_model}` : ''}{!isRealAssigned && (job.printer_profile_name ? ` · 生产配置：${job.printer_profile_name}` : job.printer_profile_id ? ` · 打印机配置 #${job.printer_profile_id}` : '')}{job.queue_item_id ? ` · 队列任务 #${job.queue_item_id}${job.queue_status ? `（${statusText[job.queue_status] || job.queue_status}）` : ''}` : ''}</div>
       {typeof result?.plate_count === 'number' && <div>切片盘数：{result.plate_count} · 每盘数量：{Array.isArray(result.plate_quantities) ? result.plate_quantities.join('、') : '—'}</div>}
-      {job.machine_result && <div>虚拟打印机报告：{job.machine_result === 'completed' ? '打印流程结束' : '打印异常'}（仍以人工质检为准）</div>}
+      {job.machine_result && <div>{isRealAssigned ? '打印机结果' : '虚拟打印机报告'}：{job.machine_result === 'completed' ? '打印流程结束，等待人工质检' : '打印失败或已取消，已自动按 0 合格登记，等待清理打印板'}</div>}
       {job.quality_confirmed_at && <div>质检结果：合格 {job.quality_good_quantity ?? 0} 套 · 报废 {job.quality_scrap_quantity ?? 0} 套</div>}
     </div>
     {job.slice_error && <p role="alert" className="text-sm text-red-400">{job.slice_error}</p>}

@@ -3,7 +3,7 @@ import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Camera, CheckCircle2, Download, QrCode, ScanLine, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { ApiError } from '../api/client';
+import { api, ApiError, type AppSettings } from '../api/client';
 import { productionApi } from '../api/production';
 import { Button } from '../components/Button';
 import { Card, CardContent, CardHeader } from '../components/Card';
@@ -57,6 +57,7 @@ function parseScanValue(rawValue: string): ParsedScan {
 export function PrinterConsumablesPage() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const settings = useQuery<AppSettings>({ queryKey: ['settings'], queryFn: api.getSettings });
   const targets = useQuery({ queryKey: ['printer-consumable-targets'], queryFn: productionApi.listConsumableTargets });
   const bindings = useQuery({ queryKey: ['printer-consumables'], queryFn: productionApi.listConsumables });
   const units = useQuery({ queryKey: ['consumable-library-for-scan'], queryFn: () => productionApi.listConsumableUnits() });
@@ -217,7 +218,7 @@ export function PrinterConsumablesPage() {
       {realPrinterTargets.length === 0 ? <p className="mt-4 text-sm text-bambu-gray">还没有已启用的真实打印机。</p> : <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{realPrinterTargets.map(target => {
         const targetKey = `${target.kind}:${target.id}`;
         const qrId = `printer-consumable-qr-${target.id}`;
-        return <div key={targetKey} className="rounded-lg border border-bambu-gray-dark bg-bambu-dark p-3"><p className="font-semibold text-white">{target.name}</p><p className="mt-1 text-xs text-bambu-gray">{target.model || '未指定型号'} · 直供耗材扫码标签</p><div className="mt-3 inline-flex rounded bg-white p-2"><QRCodeSVG id={qrId} value={buildPrinterConsumableQrPayload(mobileBaseUrl(), targetKey)} size={144} includeMargin /></div><div><Button type="button" size="sm" variant="secondary" className="mt-3" onClick={() => downloadQr(qrId, `printer-${target.id}-consumable-qr.svg`)}><Download size={14} />下载二维码</Button></div></div>;
+        return <div key={targetKey} className="rounded-lg border border-bambu-gray-dark bg-bambu-dark p-3"><p className="font-semibold text-white">{target.name}</p><p className="mt-1 text-xs text-bambu-gray">{target.model || '未指定型号'} · 直供耗材扫码标签</p><div className="mt-3 inline-flex rounded bg-white p-2"><QRCodeSVG id={qrId} value={buildPrinterConsumableQrPayload(mobileBaseUrl(settings.data?.external_url), targetKey)} size={144} includeMargin /></div><div><Button type="button" size="sm" variant="secondary" className="mt-3" onClick={() => downloadQr(qrId, `printer-${target.id}-consumable-qr.svg`)}><Download size={14} />下载二维码</Button></div></div>;
       })}</div>}
     </CardContent></Card>
     <Card><CardHeader><h2 className="text-xl font-semibold text-white flex items-center gap-2"><ScanLine size={20} />扫码登记</h2></CardHeader><CardContent>

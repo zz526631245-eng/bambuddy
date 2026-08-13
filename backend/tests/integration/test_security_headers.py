@@ -195,6 +195,26 @@ async def test_other_security_headers_unchanged(async_client: AsyncClient, monke
         assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
 
 
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_capacitor_webview_cors_preflight_is_allowed(async_client: AsyncClient):
+    """The Android companion may send authenticated JSON requests cross-origin."""
+    origin = "https://localhost"
+    resp = await async_client.options(
+        "/api/v1/production/printer-consumables/targets",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == origin
+    assert resp.headers.get("access-control-allow-credentials") == "true"
+    assert "GET" in resp.headers.get("access-control-allow-methods", "")
+
+
 # ─── #1460: nonce-based script-src so Cloudflare-injected scripts pass ────
 
 

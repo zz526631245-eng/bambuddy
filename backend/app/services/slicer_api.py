@@ -9,6 +9,7 @@ under the hood, response body is raw G-code or 3MF with metadata in the
 """
 
 import asyncio
+import ipaddress
 import logging
 from collections.abc import Callable
 from typing import NamedTuple
@@ -73,6 +74,31 @@ def _normalize_localhost_url(base_url: str) -> str:
     return urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
 
 
+def _is_loopback_sidecar_url(base_url: str) -> bool:
+    """Return whether ``base_url`` points at a local sidecar.
+
+    httpx honours ``HTTP_PROXY`` / ``HTTPS_PROXY`` by default.  That is useful
+    for cloud integrations, but it is wrong for a sidecar bound to loopback:
+    some Windows proxy configurations send even ``127.0.0.1`` through the
+    proxy, which then returns an empty 502 before the request reaches Docker.
+    Keep proxy support for remote sidecars while making local deployments
+    deterministic.
+    """
+
+    try:
+        hostname = urlsplit(base_url).hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def _format_sidecar_error(response: httpx.Response) -> str:
     """Build a human-readable error string from a sidecar 4xx/5xx response.
 
@@ -133,7 +159,12 @@ class SlicerApiService:
             self._client = _shared_http_client
             self._owns_client = False
         else:
-            self._client = httpx.AsyncClient(timeout=timeout_seconds)
+            # A local Docker sidecar must never be sent through a system proxy.
+            # Remote sidecars retain httpx's normal environment-proxy behaviour.
+            self._client = httpx.AsyncClient(
+                timeout=timeout_seconds,
+                trust_env=not _is_loopback_sidecar_url(self.base_url),
+            )
             self._owns_client = True
 
     async def close(self) -> None:

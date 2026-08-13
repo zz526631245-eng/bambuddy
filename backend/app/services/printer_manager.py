@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 import traceback
 from collections.abc import Callable
 
@@ -293,6 +294,12 @@ class PrinterInfo:
 class PrinterManager:
     """Manager for multiple printer connections."""
 
+    # A printer can still be booting or the host Wi-Fi can still be restoring
+    # its route/ARP table when Bambuddy starts.  Give the MQTT client's own
+    # reconnect loop time to recover before replacing the client, while still
+    # guaranteeing that an initial failed connection is retried.
+    CONNECTION_RETRY_COOLDOWN_SECONDS = 30.0
+
     def __init__(self):
         self._clients: dict[int, BambuMQTTClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
@@ -307,6 +314,7 @@ class PrinterManager:
         self._on_bed_temp_update: Callable[[int, float], None] | None = None
         self._on_drying_complete: Callable[[int, int], None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._last_connection_attempt: dict[int, float] = {}
         # Track who started the current print (Issue #206)
         self._current_print_user: dict[int, dict] = {}  # {printer_id: {"user_id": int, "username": str}}
         # Track printers awaiting plate-clear acknowledgment after a finished/failed print.
@@ -580,6 +588,56 @@ class PrinterManager:
         await asyncio.sleep(1)
         return client.state.connected
 
+    async def ensure_printer_connected(self, printer: Printer) -> bool:
+        """Retry a failed printer connection without disturbing healthy prints.
+
+        ``connect_async`` retries ordinary MQTT failures, but a connection
+        created while Windows is still restoring Wi-Fi can remain stuck before
+        the first successful broker handshake.  The supervisor calls this
+        method periodically so that the client is rebuilt after a cooldown.
+        A client whose last known state is an active print is left alone: a
+        network drop must not cause us to tear down a client that may still be
+        able to resume its session.
+        """
+        if not printer.is_active:
+            return False
+
+        client = self._clients.get(printer.id)
+        if client is not None:
+            if client.state.connected:
+                self._last_connection_attempt.pop(printer.id, None)
+                return True
+            if client.state.state in self.ACTIVE_PRINT_STATES:
+                logger.info(
+                    "Printer %s is disconnected while in %s; keeping the existing MQTT client for auto-reconnect",
+                    printer.id,
+                    client.state.state,
+                )
+                return False
+
+        now = time.monotonic()
+        last_attempt = self._last_connection_attempt.get(printer.id, 0.0)
+        if now - last_attempt < self.CONNECTION_RETRY_COOLDOWN_SECONDS:
+            return False
+
+        self._last_connection_attempt[printer.id] = now
+        logger.info(
+            "Retrying MQTT connection for printer %s (%s) after an unavailable connection",
+            printer.id,
+            printer.name,
+        )
+        try:
+            connected = await self.connect_printer(printer)
+        except Exception:
+            logger.exception("MQTT reconnect attempt failed for printer %s", printer.id)
+            return False
+        if connected:
+            self._last_connection_attempt.pop(printer.id, None)
+            logger.info("Printer %s MQTT connection restored", printer.id)
+        else:
+            logger.warning("Printer %s is still unavailable; will retry automatically", printer.id)
+        return connected
+
     def disconnect_printer(self, printer_id: int, timeout: float = 0):
         """Disconnect from a printer."""
         if printer_id in self._clients:
@@ -587,6 +645,7 @@ class PrinterManager:
             del self._clients[printer_id]
         self._models.pop(printer_id, None)  # Clean up model cache
         self._printer_info.pop(printer_id, None)  # Clean up printer info cache
+        self._last_connection_attempt.pop(printer_id, None)
 
     def disconnect_all(self, timeout: float = 0):
         """Disconnect from all printers."""

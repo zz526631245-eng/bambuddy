@@ -3762,6 +3762,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+  setPrinterMaintenance: (id: number, maintenance: boolean) =>
+    request<Printer>(`/printers/${id}/maintenance`, {
+      method: 'POST',
+      body: JSON.stringify({ maintenance }),
+    }),
   deletePrinter: (id: number, deleteArchives: boolean = true) =>
     request<{ status: string; archives_deleted: boolean }>(
       `/printers/${id}?delete_archives=${deleteArchives}`,
